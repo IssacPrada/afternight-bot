@@ -10,7 +10,7 @@ class Database:
         self.pool = None
 
     async def init(self):
-        self.pool = await asyncpg.create_pool(DATABASE_URL)
+        self.pool = await asyncpg.create_pool(DATABASE_URL, ssl="require")
         async with self.pool.acquire() as conn:
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS strikes (
