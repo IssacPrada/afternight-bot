@@ -2,7 +2,7 @@ import aiosqlite
 import datetime
 from typing import Optional, List, Dict
 
-DB_PATH = "data/afternight.db"
+DB_PATH = os.getenv("DB_PATH", "/app/data/afternight.db")
 
 class Database:
     def __init__(self):
