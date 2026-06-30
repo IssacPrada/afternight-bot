@@ -5,6 +5,9 @@ from dotenv import load_dotenv
 
 load_dotenv()  # Must be before anything else reads os.getenv
 
+load_dotenv()
+print("DATABASE_URL:", os.getenv("DATABASE_URL"))
+
 import discord
 from discord.ext import commands
 from discord import app_commands
