@@ -1,37 +1,44 @@
 """
 roblox_bridge.py — FastAPI bridge for Roblox HTTPService → Discord Bot.
+Now uses shared Postgres database via Supabase.
 """
 from fastapi import FastAPI, HTTPException, Header, Depends
 from pydantic import BaseModel
-import aiosqlite
+import asyncpg
 import os
 import datetime
 
-# ── Ensure data directory exists ──────────────────────────────────────────────
-DB_PATH  = os.getenv("DB_PATH", "/app/data/afternight.db")
-AUTH_KEY = os.getenv("ROBLOX_BRIDGE_KEY", "change-this-secret-key")
-
-os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+DATABASE_URL = os.getenv("DATABASE_URL")
+AUTH_KEY     = os.getenv("ROBLOX_BRIDGE_KEY", "change-this-secret-key")
 
 app = FastAPI(title="Afternight Roblox Bridge", version="1.0.0")
 
+# Global connection pool
+pool = None
 
-# ── Init DB on startup ────────────────────────────────────────────────────────
 
 @app.on_event("startup")
 async def startup():
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.executescript("""
+    global pool
+    pool = await asyncpg.create_pool(DATABASE_URL)
+    async with pool.acquire() as conn:
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS sessions (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                roblox_user TEXT    NOT NULL,
+                id          SERIAL PRIMARY KEY,
+                roblox_user TEXT      NOT NULL,
                 faction     TEXT,
-                joined_at   TEXT    NOT NULL,
-                left_at     TEXT,
-                duration_s  INTEGER DEFAULT 0
+                joined_at   TIMESTAMP NOT NULL DEFAULT NOW(),
+                left_at     TIMESTAMP,
+                duration_s  INTEGER   DEFAULT 0
             );
         """)
-        await db.commit()
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    global pool
+    if pool:
+        await pool.close()
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -60,57 +67,50 @@ async def health():
 
 @app.post("/session/start", dependencies=[Depends(verify_key)])
 async def session_start(body: SessionStart):
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "INSERT INTO sessions (roblox_user, faction, joined_at) "
-            "VALUES (?, ?, datetime('now'))",
-            (body.roblox_user, body.faction)
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO sessions (roblox_user, faction) "
+            "VALUES ($1, $2) RETURNING id",
+            body.roblox_user, body.faction
         )
-        await db.commit()
-        return {"session_id": cur.lastrowid, "status": "started"}
+        return {"session_id": row["id"], "status": "started"}
 
 
 @app.post("/session/end", dependencies=[Depends(verify_key)])
 async def session_end(body: SessionEnd):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "UPDATE sessions "
-            "SET left_at = datetime('now'), "
-            "duration_s = CAST((julianday('now') - julianday(joined_at)) * 86400 AS INTEGER) "
-            "WHERE id = ?",
-            (body.session_id,)
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE sessions SET left_at=NOW(), "
+            "duration_s = EXTRACT(EPOCH FROM (NOW() - joined_at))::INTEGER "
+            "WHERE id=$1",
+            body.session_id
         )
-        await db.commit()
-
-        async with db.execute(
-            "SELECT duration_s, roblox_user, faction FROM sessions WHERE id = ?",
-            (body.session_id,)
-        ) as cur:
-            row = await cur.fetchone()
+        row = await conn.fetchrow(
+            "SELECT duration_s, roblox_user, faction FROM sessions WHERE id=$1",
+            body.session_id
+        )
 
     if not row:
         raise HTTPException(status_code=404, detail="Session not found")
 
     return {
         "session_id":  body.session_id,
-        "roblox_user": row[1],
-        "faction":     row[2],
-        "duration_s":  row[0],
+        "roblox_user": row["roblox_user"],
+        "faction":     row["faction"],
+        "duration_s":  row["duration_s"],
         "status":      "ended"
     }
 
 
 @app.get("/player/{roblox_username}/stats", dependencies=[Depends(verify_key)])
 async def player_stats(roblox_username: str, days: int = 7):
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
             "SELECT joined_at, left_at, duration_s FROM sessions "
-            "WHERE roblox_user = ? AND joined_at >= datetime('now', ? || ' days') "
+            "WHERE roblox_user=$1 AND joined_at >= NOW() - ($2 || ' days')::INTERVAL "
             "ORDER BY joined_at DESC",
-            (roblox_username, f"-{days}")
-        ) as cur:
-            rows = await cur.fetchall()
+            roblox_username, str(days)
+        )
 
     total = sum(r["duration_s"] or 0 for r in rows)
     last  = rows[0]["joined_at"] if rows else None
@@ -120,27 +120,6 @@ async def player_stats(roblox_username: str, days: int = 7):
         "days":          days,
         "total_seconds": total,
         "session_count": len(rows),
-        "last_seen":     last,
+        "last_seen":     str(last) if last else None,
         "sessions":      [dict(r) for r in rows]
-    }
-
-
-@app.get("/faction/{faction}/stats", dependencies=[Depends(verify_key)])
-async def faction_stats(faction: str, days: int = 7):
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT roblox_user, SUM(duration_s) as total_s, "
-            "MAX(joined_at) as last_seen, COUNT(*) as session_count "
-            "FROM sessions "
-            "WHERE faction = ? AND joined_at >= datetime('now', ? || ' days') "
-            "GROUP BY roblox_user ORDER BY total_s DESC",
-            (faction, f"-{days}")
-        ) as cur:
-            rows = await cur.fetchall()
-
-    return {
-        "faction": faction,
-        "days":    days,
-        "members": [dict(r) for r in rows]
     }
