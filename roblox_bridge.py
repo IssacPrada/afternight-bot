@@ -1,39 +1,5 @@
 """
 roblox_bridge.py — FastAPI bridge for Roblox HTTPService → Discord Bot.
-Deploy this separately from the bot (Railway, Render, VPS etc.)
-
-Roblox Lua example:
-    local HttpService = game:GetService("HttpService")
-    local URL = "https://your-bridge.com"
-    local KEY = "your-secret-key"
-
-    -- On player join
-    game.Players.PlayerAdded:Connect(function(player)
-        local faction = getFaction(player) -- your own logic
-        local res = HttpService:PostAsync(
-            URL .. "/session/start",
-            HttpService:JSONEncode({ roblox_user = player.Name, faction = faction }),
-            Enum.HttpContentType.ApplicationJson,
-            false,
-            { ["x-auth-key"] = KEY }
-        )
-        local data = HttpService:JSONDecode(res)
-        player:SetAttribute("SessionId", data.session_id)
-    end)
-
-    -- On player leave
-    game.Players.PlayerRemoving:Connect(function(player)
-        local sid = player:GetAttribute("SessionId")
-        if sid then
-            HttpService:PostAsync(
-                URL .. "/session/end",
-                HttpService:JSONEncode({ session_id = sid }),
-                Enum.HttpContentType.ApplicationJson,
-                false,
-                { ["x-auth-key"] = KEY }
-            )
-        end
-    end)
 """
 from fastapi import FastAPI, HTTPException, Header, Depends
 from pydantic import BaseModel
@@ -41,20 +7,41 @@ import aiosqlite
 import os
 import datetime
 
-app = FastAPI(title="Afternight Roblox Bridge", version="1.0.0")
-
-DB_PATH = os.getenv("DB_PATH", "/app/data/afternight.db")
+# ── Ensure data directory exists ──────────────────────────────────────────────
+DB_PATH  = os.getenv("DB_PATH", "/app/data/afternight.db")
 AUTH_KEY = os.getenv("ROBLOX_BRIDGE_KEY", "change-this-secret-key")
 
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
-# ─── Auth ──────────────────────────────────────────────────────────────────────
+app = FastAPI(title="Afternight Roblox Bridge", version="1.0.0")
+
+
+# ── Init DB on startup ────────────────────────────────────────────────────────
+
+@app.on_event("startup")
+async def startup():
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.executescript("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                roblox_user TEXT    NOT NULL,
+                faction     TEXT,
+                joined_at   TEXT    NOT NULL,
+                left_at     TEXT,
+                duration_s  INTEGER DEFAULT 0
+            );
+        """)
+        await db.commit()
+
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
 
 def verify_key(x_auth_key: str = Header(...)):
     if x_auth_key != AUTH_KEY:
         raise HTTPException(status_code=403, detail="Invalid auth key")
 
 
-# ─── Models ────────────────────────────────────────────────────────────────────
+# ── Models ────────────────────────────────────────────────────────────────────
 
 class SessionStart(BaseModel):
     roblox_user: str
@@ -64,7 +51,7 @@ class SessionEnd(BaseModel):
     session_id: int
 
 
-# ─── Routes ────────────────────────────────────────────────────────────────────
+# ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 async def health():
@@ -73,7 +60,6 @@ async def health():
 
 @app.post("/session/start", dependencies=[Depends(verify_key)])
 async def session_start(body: SessionStart):
-    """Called when a player joins the Roblox game."""
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             "INSERT INTO sessions (roblox_user, faction, joined_at) "
@@ -86,7 +72,6 @@ async def session_start(body: SessionStart):
 
 @app.post("/session/end", dependencies=[Depends(verify_key)])
 async def session_end(body: SessionEnd):
-    """Called when a player leaves the Roblox game."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "UPDATE sessions "
@@ -107,17 +92,16 @@ async def session_end(body: SessionEnd):
         raise HTTPException(status_code=404, detail="Session not found")
 
     return {
-        "session_id": body.session_id,
+        "session_id":  body.session_id,
         "roblox_user": row[1],
-        "faction": row[2],
-        "duration_s": row[0],
-        "status": "ended"
+        "faction":     row[2],
+        "duration_s":  row[0],
+        "status":      "ended"
     }
 
 
 @app.get("/player/{roblox_username}/stats", dependencies=[Depends(verify_key)])
 async def player_stats(roblox_username: str, days: int = 7):
-    """Pull a single player's stats."""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
@@ -129,21 +113,20 @@ async def player_stats(roblox_username: str, days: int = 7):
             rows = await cur.fetchall()
 
     total = sum(r["duration_s"] or 0 for r in rows)
-    last = rows[0]["joined_at"] if rows else None
+    last  = rows[0]["joined_at"] if rows else None
 
     return {
-        "roblox_user": roblox_username,
-        "days": days,
+        "roblox_user":   roblox_username,
+        "days":          days,
         "total_seconds": total,
         "session_count": len(rows),
-        "last_seen": last,
-        "sessions": [dict(r) for r in rows]
+        "last_seen":     last,
+        "sessions":      [dict(r) for r in rows]
     }
 
 
 @app.get("/faction/{faction}/stats", dependencies=[Depends(verify_key)])
 async def faction_stats(faction: str, days: int = 7):
-    """Pull full faction stats."""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
@@ -158,6 +141,6 @@ async def faction_stats(faction: str, days: int = 7):
 
     return {
         "faction": faction,
-        "days": days,
+        "days":    days,
         "members": [dict(r) for r in rows]
     }
