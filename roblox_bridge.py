@@ -43,7 +43,7 @@ import datetime
 
 app = FastAPI(title="Afternight Roblox Bridge", version="1.0.0")
 
-DB_PATH  = os.getenv("DB_PATH", "data/afternight.db")
+DB_PATH = os.getenv("DB_PATH", "/app/data/afternight.db")
 AUTH_KEY = os.getenv("ROBLOX_BRIDGE_KEY", "change-this-secret-key")
 
 
