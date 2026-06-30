@@ -1,11 +1,13 @@
-import discord
-from discord.ext import commands
-from dotenv import load_dotenv
-load_dotenv()
-from discord import app_commands
+import os
 import asyncio
 import logging
-import os
+from dotenv import load_dotenv
+
+load_dotenv()  # Must be before anything else reads os.getenv
+
+import discord
+from discord.ext import commands
+from discord import app_commands
 from database import Database
 
 logging.basicConfig(
