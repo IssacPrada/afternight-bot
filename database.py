@@ -10,7 +10,17 @@ class Database:
         self.pool = None
 
     async def init(self):
-        pool = await asyncpg.create_pool(DATABASE_URL, ssl="require", statement_cache_size=0)
+        try:
+            self.pool = await asyncpg.create_pool(
+                DATABASE_URL,
+                ssl="require",
+                statement_cache_size=0
+            )
+            print("✅ Database connected successfully")
+        except Exception as e:
+            print(f"❌ Database connection failed: {e}")
+            raise
+
         async with self.pool.acquire() as conn:
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS strikes (
@@ -25,7 +35,7 @@ class Database:
 
                 CREATE TABLE IF NOT EXISTS sessions (
                     id          SERIAL PRIMARY KEY,
-                    roblox_user TEXT    NOT NULL,
+                    roblox_user TEXT      NOT NULL,
                     faction     TEXT,
                     joined_at   TIMESTAMP NOT NULL DEFAULT NOW(),
                     left_at     TIMESTAMP,
