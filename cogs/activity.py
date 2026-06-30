@@ -6,7 +6,7 @@ from discord import app_commands
 from discord.ext import commands
 from constants import (
     FACTION_COLORS, STRIKE_STATUS,
-    can_use_faction_commands, get_leader_faction
+    can_use_faction_commands
 )
 from utils.roblox import (
     fetch_roblox_user, fetch_faction_members,
@@ -27,10 +27,23 @@ def fmt(seconds: int) -> str:
     return f"{m}m {s}s"
 
 
-def days_since(date_str: str) -> int:
+def to_str(dt) -> str:
+    """Convert datetime object or string to string."""
+    if dt is None:
+        return None
+    if isinstance(dt, str):
+        return dt
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def days_since(dt) -> int:
+    """Return how many days since a datetime object or string."""
     try:
-        last = datetime.datetime.fromisoformat(date_str)
-        return (datetime.datetime.utcnow() - last).days
+        if isinstance(dt, str):
+            dt = datetime.datetime.fromisoformat(dt)
+        if dt.tzinfo is not None:
+            dt = dt.replace(tzinfo=None)
+        return (datetime.datetime.utcnow() - dt).days
     except Exception:
         return 999
 
@@ -72,32 +85,29 @@ class ActivityCog(commands.Cog):
             )
 
         # ── Check faction restriction ─────────────────────────────────────────
-        if faction_restriction:
-            rank = await fetch_player_rank_in_group(roblox_data["id"])
-            player_faction = RANK_TO_FACTION.get(rank)
-            if player_faction != faction_restriction:
-                return await interaction.followup.send(
-                    f"❌ `{roblox_username}` is not in **{faction_restriction}**.",
-                    ephemeral=True
-                )
+        rank = await fetch_player_rank_in_group(roblox_data["id"])
+        player_faction = RANK_TO_FACTION.get(rank, "Unknown")
 
-        # ── Fetch sessions (last 7 days) ──────────────────────────────────────
+        if faction_restriction and player_faction != faction_restriction:
+            return await interaction.followup.send(
+                f"❌ `{roblox_username}` is not in **{faction_restriction}**.",
+                ephemeral=True
+            )
+
+        faction_color = FACTION_COLORS.get(player_faction, 0x5865F2)
+
+        # ── Fetch sessions ────────────────────────────────────────────────────
         sessions = await self.bot.db.get_player_sessions(roblox_username, days=7)
         total_seconds = sum(s.get("duration_s") or 0 for s in sessions)
         last_session = sessions[0] if sessions else None
 
         # ── Work out inactivity ───────────────────────────────────────────────
         if last_session:
-            inactive_for = days_since(last_session.get("joined_at", ""))
+            inactive_for = days_since(last_session.get("joined_at"))
             is_inactive = inactive_for >= INACTIVE_DAYS
         else:
             inactive_for = INACTIVE_DAYS
             is_inactive = True
-
-        # ── Get their faction from group ──────────────────────────────────────
-        rank = await fetch_player_rank_in_group(roblox_data["id"])
-        player_faction = RANK_TO_FACTION.get(rank, "Unknown")
-        faction_color = FACTION_COLORS.get(player_faction, 0x5865F2)
 
         # ── Build embed ───────────────────────────────────────────────────────
         embed = discord.Embed(
@@ -119,12 +129,13 @@ class ActivityCog(commands.Cog):
         embed.add_field(name="⏱ Total Time This Week", value=fmt(total_seconds), inline=True)
         embed.add_field(name="🎮 Sessions This Week", value=str(len(sessions)), inline=True)
 
-        # ── Last seen ─────────────────────────────────────────────────────────
+        # ── Last session ──────────────────────────────────────────────────────
         if last_session:
-            joined = last_session.get("joined_at", "N/A")[:16].replace("T", " ")
-            left = last_session.get("left_at")
-            left_str = left[:16].replace("T", " ") if left else "Still in session"
-            duration = fmt(last_session.get("duration_s") or 0)
+            joined_dt = last_session.get("joined_at")
+            left_dt   = last_session.get("left_at")
+            joined    = to_str(joined_dt)[:16].replace("T", " ") if joined_dt else "N/A"
+            left_str  = to_str(left_dt)[:16].replace("T", " ") if left_dt else "Still in session"
+            duration  = fmt(last_session.get("duration_s") or 0)
             embed.add_field(
                 name="📌 Last Session",
                 value=(
@@ -197,7 +208,6 @@ class ActivityCog(commands.Cog):
 
         # ── Enforce faction restriction ───────────────────────────────────────
         if faction_restriction:
-            # Leader/overseer — ignore what they passed and use their faction
             faction = faction_restriction
         elif not faction:
             return await interaction.followup.send(
@@ -206,7 +216,7 @@ class ActivityCog(commands.Cog):
 
         faction_color = FACTION_COLORS.get(faction, 0x5865F2)
 
-        # ── Loading message since this may take a moment ──────────────────────
+        # ── Loading message ───────────────────────────────────────────────────
         loading = discord.Embed(
             title=f"⏳ Loading {faction} activity...",
             description="Fetching live member list from Roblox group...",
@@ -226,32 +236,32 @@ class ActivityCog(commands.Cog):
             await msg.edit(embed=err)
             return
 
-        # ── Pull playtime data from database for each member ──────────────────
+        # ── Pull playtime data for each member ────────────────────────────────
         member_data = []
         for member in group_members:
             username = member["username"]
             sessions = await self.bot.db.get_player_sessions(username, days=days)
-            total_s = sum(s.get("duration_s") or 0 for s in sessions)
+            total_s  = sum(s.get("duration_s") or 0 for s in sessions)
             last_seen = sessions[0].get("joined_at") if sessions else None
-            inactive_days = days_since(last_seen) if last_seen else 999
-            is_inactive = inactive_days >= INACTIVE_DAYS
+            inactive_days_count = days_since(last_seen) if last_seen else 999
+            is_inactive = inactive_days_count >= INACTIVE_DAYS
 
             member_data.append({
-                "username":     username,
-                "displayName":  member["displayName"],
-                "total_s":      total_s,
-                "sessions":     len(sessions),
-                "last_seen":    last_seen,
-                "inactive_days": inactive_days,
-                "is_inactive":  is_inactive,
+                "username":          username,
+                "displayName":       member["displayName"],
+                "total_s":           total_s,
+                "sessions":          len(sessions),
+                "last_seen":         last_seen,
+                "inactive_days":     inactive_days_count,
+                "is_inactive":       is_inactive,
             })
 
         # ── Sort by most active ───────────────────────────────────────────────
         member_data.sort(key=lambda x: x["total_s"], reverse=True)
 
         total_faction_seconds = sum(m["total_s"] for m in member_data)
-        inactive_members = [m for m in member_data if m["is_inactive"]]
-        active_members = [m for m in member_data if not m["is_inactive"]]
+        inactive_members      = [m for m in member_data if m["is_inactive"]]
+        active_members        = [m for m in member_data if not m["is_inactive"]]
 
         # ── Build embed ───────────────────────────────────────────────────────
         embed = discord.Embed(
@@ -261,61 +271,35 @@ class ActivityCog(commands.Cog):
             timestamp=datetime.datetime.utcnow()
         )
 
-        embed.add_field(
-            name="👥 Total Members",
-            value=str(len(group_members)),
-            inline=True
-        )
-        embed.add_field(
-            name="⏱ Total Faction Time",
-            value=fmt(total_faction_seconds),
-            inline=True
-        )
-        embed.add_field(
-            name="⚠️ Inactive",
-            value=f"{len(inactive_members)} member(s)",
-            inline=True
-        )
+        embed.add_field(name="👥 Total Members",     value=str(len(group_members)), inline=True)
+        embed.add_field(name="⏱ Total Faction Time", value=fmt(total_faction_seconds), inline=True)
+        embed.add_field(name="⚠️ Inactive",          value=f"{len(inactive_members)} member(s)", inline=True)
 
         # ── Most active ranked ────────────────────────────────────────────────
         if active_members:
             leaderboard = ""
             for i, m in enumerate(active_members, 1):
-                last = m["last_seen"][:10] if m["last_seen"] else "Never"
+                last = to_str(m["last_seen"])[:10] if m["last_seen"] else "Never"
                 leaderboard += (
                     f"`{i:>2}.` **{m['username']}** "
                     f"— ⏱ {fmt(m['total_s'])} "
                     f"· 🎮 {m['sessions']} sessions "
                     f"· 📅 {last}\n"
                 )
-
-            # Chunk if needed
             if len(leaderboard) <= 1024:
-                embed.add_field(
-                    name="🏆 Most Active",
-                    value=leaderboard,
-                    inline=False
-                )
+                embed.add_field(name="🏆 Most Active", value=leaderboard, inline=False)
             else:
                 chunks = [leaderboard[i:i+1000] for i in range(0, len(leaderboard), 1000)]
                 for idx, chunk in enumerate(chunks):
-                    embed.add_field(
-                        name=f"🏆 Most Active ({idx + 1})",
-                        value=chunk,
-                        inline=False
-                    )
+                    embed.add_field(name=f"🏆 Most Active ({idx + 1})", value=chunk, inline=False)
         else:
-            embed.add_field(
-                name="🏆 Most Active",
-                value="No active members this period.",
-                inline=False
-            )
+            embed.add_field(name="🏆 Most Active", value="No active members this period.", inline=False)
 
         # ── Inactive members ──────────────────────────────────────────────────
         if inactive_members:
             inactive_text = ""
             for m in inactive_members:
-                last = m["last_seen"][:10] if m["last_seen"] else "Never played"
+                last     = to_str(m["last_seen"])[:10] if m["last_seen"] else "Never played"
                 days_ago = m["inactive_days"]
                 days_str = f"{days_ago}d ago" if days_ago != 999 else "Never"
                 inactive_text += f"• **{m['username']}** — last seen {last} ({days_str})\n"
