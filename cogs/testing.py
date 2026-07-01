@@ -102,39 +102,63 @@ class TestingCog(commands.Cog):
 
     # ── Auto-rank listener ────────────────────────────────────────────────────
 
-    @commands.Cog.listener()
-    async def on_message(self, message: discord.Message):
-        """
-        When someone sends their Roblox username in the testing channel,
-        verify it exists and rank them to Tester in the Legacies group.
-        """
-        if message.author.bot:
-            return
-        if message.channel.id != TESTING_CHANNEL_ID:
-            return
+   @commands.Cog.listener()
+async def on_message(self, message: discord.Message):
+    if message.author.bot:
+        return
+    if message.channel.id != TESTING_CHANNEL_ID:
+        return
 
-        roblox_username = message.content.strip()
+    # ── Only Game Testers can use this channel ────────────────────────────
+    tester_role = message.guild.get_role(GAME_TESTER_ROLE_ID)
+    if tester_role not in message.author.roles:
+        await message.reply(
+            "❌ Only Game Testers may submit their username here.",
+            delete_after=10
+        )
+        return
 
-        # Basic validation — usernames can't have spaces or be too long
-        if " " in roblox_username or len(roblox_username) > 20 or len(roblox_username) < 3:
+    roblox_username = message.content.strip()
+
+    # Basic validation — no spaces, reasonable length
+    if " " in roblox_username or len(roblox_username) > 20 or len(roblox_username) < 1:
+        await message.reply(
+            "❌ Please send just your Roblox username with no spaces.",
+            delete_after=10
+        )
+        return
+
+    # Show typing indicator while we process
+    async with message.channel.typing():
+        roblox_data = await fetch_roblox_user(roblox_username)
+        if not roblox_data:
             await message.reply(
-                "❌ That doesn't look like a valid Roblox username. "
-                "Please send just your Roblox username with no spaces.",
-                delete_after=10
+                f"❌ Could not find Roblox user `{roblox_username}`. "
+                "Please double check your username and try again.",
+                delete_after=15
             )
             return
 
-        # Show typing indicator while we process
-        async with message.channel.typing():
-            # Verify username exists
-            roblox_data = await fetch_roblox_user(roblox_username)
-            if not roblox_data:
-                await message.reply(
-                    f"❌ Could not find Roblox user `{roblox_username}`. "
-                    "Please double check your username and try again.",
-                    delete_after=15
-                )
-                return
+        success, result_msg = await rank_to_tester(roblox_username)
+
+    if success:
+        embed = discord.Embed(
+            title="🎮 Tester Rank Granted!",
+            color=discord.Color.green(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        embed.set_thumbnail(url=roblox_data.get("avatar_url") or message.author.display_avatar.url)
+        embed.add_field(name="Discord", value=message.author.mention, inline=True)
+        embed.add_field(name="Roblox", value=f"`{roblox_username}`", inline=True)
+        embed.add_field(
+            name="Game Link",
+            value=f"[Click to join]({GAME_LINK})",
+            inline=False
+        )
+        embed.set_footer(text="Afternight Legacies Testing")
+        await message.reply(embed=embed)
+    else:
+        await message.reply(f"❌ Failed to rank: {result_msg}", delete_after=15)
 
             # Rank them to tester
             success, result_msg = await rank_to_tester(roblox_username)
