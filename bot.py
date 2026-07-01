@@ -27,6 +27,8 @@ LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))  # Set your log channel I
 intents = discord.Intents.default()
 intents.members = True
 intents.guilds = True
+intents.message_content = True
+intents.messages = True
 
 class AfternightBot(commands.Bot):
     def __init__(self):
