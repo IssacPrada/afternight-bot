@@ -116,6 +116,18 @@ class TestingCog(commands.Cog):
         print(f"[DEBUG] Looking for role: {GAME_TESTER_ROLE_ID}")
         print(f"[DEBUG] Tester role found: {message.guild.get_role(GAME_TESTER_ROLE_ID)}")
 
+        # ── Prevent duplicate ranking ─────────────────────────────────────────────
+        async for msg in message.channel.history(limit=100):
+            if msg.author == self.bot.user and msg.reference:
+                ref = msg.reference.resolved
+                if ref and ref.author == message.author and "Tester Rank Granted" in (
+                msg.embeds[0].title if msg.embeds else ""):
+                    await message.reply(
+                        "⚠️ You have already been ranked to Tester!",
+                        delete_after=10
+                    )
+                    return
+
         # ── Only Game Testers can use this channel ────────────────────────────
         tester_role = message.guild.get_role(GAME_TESTER_ROLE_ID)
         if tester_role not in message.author.roles:
