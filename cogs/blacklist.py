@@ -7,11 +7,12 @@ from discord.ext import commands
 from constants import (
     FACTION_COLORS, ALL_FACTION_ROLES,
     BLACKLIST_CHANNEL_ID,
-    can_use_blacklist
+    can_use_blacklist, has_fire_permission
 )
 from utils.roblox_group import exile_from_group, get_roblox_user_id, get_xcsrf_token, HEADERS, GROUP_ID
 import aiohttp
 import datetime
+from discord.ext import tasks
 
 
 async def unban_from_group(roblox_username: str) -> tuple[bool, str]:
@@ -70,16 +71,21 @@ def build_blacklist_embed(entries: list, guild: discord.Guild) -> discord.Embed:
     )
 
     if not entries:
-        embed.add_field(name="No Blacklisted Members", value="The blacklist is currently empty.", inline=False)
+        embed.add_field(
+            name="No Blacklisted Members",
+            value="The blacklist is currently empty.",
+            inline=False
+        )
+        embed.set_footer(text="Last updated")
         return embed
 
     for entry in entries:
-        user = guild.get_member(int(entry["user_id"]))
+        user    = guild.get_member(int(entry["user_id"]))
         user_str = user.mention if user else f"<@{entry['user_id']}>"
-        roblox = entry.get("roblox_username") or "N/A"
-        date = entry.get("created_at", "")[:10]
-        by = guild.get_member(int(entry["blacklisted_by"]))
-        by_str = by.display_name if by else f"ID: {entry['blacklisted_by']}"
+        roblox  = entry.get("roblox_username") or "N/A"
+        date    = str(entry.get("created_at", ""))[:10]
+        by      = guild.get_member(int(entry["blacklisted_by"]))
+        by_str  = by.display_name if by else f"ID: {entry['blacklisted_by']}"
 
         embed.add_field(
             name=f"🔴 {user_str} — {entry['faction']}",
@@ -92,13 +98,32 @@ def build_blacklist_embed(entries: list, guild: discord.Guild) -> discord.Embed:
             inline=False
         )
 
-    embed.set_footer(text=f"Total blacklisted: {len(entries)}")
+    embed.set_footer(text=f"Total blacklisted: {len(entries)} · Last updated")
     return embed
 
 
 class BlacklistCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.blacklist_message_id: int | None = None
+        self.auto_update.start()
+
+    def cog_unload(self):
+        self.auto_update.cancel()
+
+    # ── Auto update every 24 hours ────────────────────────────────────────────
+
+    @tasks.loop(hours=24)
+    async def auto_update(self):
+        await self.bot.wait_until_ready()
+        for guild in self.bot.guilds:
+            await self._update_blacklist_channel(guild)
+
+    @auto_update.before_loop
+    async def before_auto_update(self):
+        await self.bot.wait_until_ready()
+
+    # ── Update blacklist embed ────────────────────────────────────────────────
 
     async def _update_blacklist_channel(self, guild: discord.Guild):
         """Rebuild and update the blacklist embed in the tracking channel."""
@@ -107,17 +132,37 @@ class BlacklistCog(commands.Cog):
             return
 
         entries = await self.bot.db.get_all_blacklisted(str(guild.id))
-        embed = build_blacklist_embed(entries, guild)
+        embed   = build_blacklist_embed(entries, guild)
 
-        # Try to find and edit the existing pinned message
-        async for message in channel.history(limit=20):
+        # Try to find and edit the existing embed
+        async for message in channel.history(limit=50):
             if message.author == self.bot.user and message.embeds:
-                if message.embeds[0].title == "🚫 Faction Blacklist":
+                if "Faction Blacklist" in message.embeds[0].title:
                     await message.edit(embed=embed)
                     return
 
-        # No existing message found — send a new one
+        # No existing message — send a new one
         await channel.send(embed=embed)
+
+    # ── /setupblacklist ───────────────────────────────────────────────────────
+
+    @app_commands.command(
+        name="setupblacklist",
+        description="Post or refresh the blacklist embed in the blacklist channel."
+    )
+    async def setupblacklist(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        if not has_fire_permission(interaction.user):
+            return await interaction.followup.send(
+                "❌ Only privileged roles may use this command.", ephemeral=True
+            )
+
+        await self._update_blacklist_channel(interaction.guild)
+        await interaction.followup.send(
+            f"✅ Blacklist embed updated in <#{BLACKLIST_CHANNEL_ID}>.",
+            ephemeral=True
+        )
 
     # ── /blacklist ────────────────────────────────────────────────────────────
 
@@ -135,7 +180,7 @@ class BlacklistCog(commands.Cog):
                         roblox_username: str = None):
         await interaction.response.defer(ephemeral=True)
 
-        actor = interaction.user
+        actor   = interaction.user
         allowed, actor_faction = can_use_blacklist(actor)
 
         if not allowed:
@@ -152,24 +197,19 @@ class BlacklistCog(commands.Cog):
                 ephemeral=True
             )
 
-        # ── Determine which faction this is for ───────────────────────────────
-        # If actor oversees a specific faction, use that
-        # If general council (actor_faction is None), use target's current faction
+        # ── Determine faction ─────────────────────────────────────────────────
         target_faction = actor_faction
         if not target_faction:
             from constants import get_member_faction
             target_faction = get_member_faction(user)
             if not target_faction:
-                # If they have no faction role just ask for clarification
                 return await interaction.followup.send(
-                    f"❌ {user.mention} has no faction role. Please specify which "
-                    "faction they are being blacklisted from by assigning them the "
-                    "faction role first.",
+                    f"❌ {user.mention} has no faction role.",
                     ephemeral=True
                 )
 
         faction_color = FACTION_COLORS.get(target_faction, 0xFF0000)
-        guild = interaction.guild
+        guild         = interaction.guild
 
         # ── Remove all faction roles ──────────────────────────────────────────
         roles_removed = []
@@ -187,12 +227,11 @@ class BlacklistCog(commands.Cog):
         # ── Ban from Roblox group ─────────────────────────────────────────────
         roblox_result = "No Roblox username provided."
         if roblox_username:
-            # First exile them (kick) then ban
             await exile_from_group(roblox_username)
             success, roblox_result = await ban_from_group(roblox_username)
 
         # ── Save to database ──────────────────────────────────────────────────
-        bl_id = await self.bot.db.add_blacklist(
+        await self.bot.db.add_blacklist(
             str(user.id), str(guild.id), target_faction,
             reason, str(actor.id), roblox_username
         )
@@ -230,28 +269,28 @@ class BlacklistCog(commands.Cog):
             timestamp=datetime.datetime.utcnow()
         )
         embed.set_thumbnail(url=user.display_avatar.url)
-        embed.add_field(name="Member", value=user.mention, inline=True)
-        embed.add_field(name="Faction", value=target_faction, inline=True)
-        embed.add_field(name="Blacklisted By", value=actor.mention, inline=True)
-        embed.add_field(name="Reason", value=reason, inline=False)
-        embed.add_field(name="Roles Removed", value=removed_names, inline=False)
-        embed.add_field(name="Roblox Action", value=roblox_result, inline=False)
+        embed.add_field(name="Member",         value=user.mention,    inline=True)
+        embed.add_field(name="Faction",        value=target_faction,  inline=True)
+        embed.add_field(name="Blacklisted By", value=actor.mention,   inline=True)
+        embed.add_field(name="Reason",         value=reason,          inline=False)
+        embed.add_field(name="Roles Removed",  value=removed_names,   inline=False)
+        embed.add_field(name="Roblox Action",  value=roblox_result,   inline=False)
         await interaction.followup.send(embed=embed)
 
-        # ── Update blacklist channel ──────────────────────────────────────────
+        # ── Update blacklist channel immediately ──────────────────────────────
         await self._update_blacklist_channel(guild)
 
-        # ── Log to log channel ────────────────────────────────────────────────
+        # ── Log ───────────────────────────────────────────────────────────────
         log_embed = discord.Embed(
             title="📋 Member Blacklisted",
             color=discord.Color.dark_red(),
             timestamp=datetime.datetime.utcnow()
         )
-        log_embed.add_field(name="Target", value=f"{user.mention} (`{user.id}`)", inline=True)
-        log_embed.add_field(name="By", value=actor.mention, inline=True)
-        log_embed.add_field(name="Faction", value=target_faction, inline=True)
-        log_embed.add_field(name="Roblox", value=f"`{roblox_username or 'N/A'}`", inline=True)
-        log_embed.add_field(name="Reason", value=reason, inline=False)
+        log_embed.add_field(name="Target",  value=f"{user.mention} (`{user.id}`)", inline=True)
+        log_embed.add_field(name="By",      value=actor.mention,                   inline=True)
+        log_embed.add_field(name="Faction", value=target_faction,                  inline=True)
+        log_embed.add_field(name="Roblox",  value=f"`{roblox_username or 'N/A'}`", inline=True)
+        log_embed.add_field(name="Reason",  value=reason,                          inline=False)
         await self.bot.log_action(log_embed)
 
     # ── /unblacklist ──────────────────────────────────────────────────────────
@@ -264,7 +303,7 @@ class BlacklistCog(commands.Cog):
     async def unblacklist(self, interaction: discord.Interaction, user: discord.Member):
         await interaction.response.defer(ephemeral=True)
 
-        actor = interaction.user
+        actor   = interaction.user
         allowed, actor_faction = can_use_blacklist(actor)
 
         if not allowed:
@@ -274,8 +313,6 @@ class BlacklistCog(commands.Cog):
             )
 
         guild = interaction.guild
-
-        # ── Check if actually blacklisted ─────────────────────────────────────
         entry = await self.bot.db.is_blacklisted(str(user.id), str(guild.id))
         if not entry:
             return await interaction.followup.send(
@@ -283,7 +320,6 @@ class BlacklistCog(commands.Cog):
                 ephemeral=True
             )
 
-        # ── Council overseers can only unblacklist their own faction ──────────
         if actor_faction and entry["faction"] != actor_faction:
             return await interaction.followup.send(
                 f"❌ {user.mention} is blacklisted from **{entry['faction']}**, "
@@ -292,8 +328,8 @@ class BlacklistCog(commands.Cog):
             )
 
         # ── Unban from Roblox group ───────────────────────────────────────────
-        roblox_result = "No Roblox username on record."
-        roblox_username = entry.get("roblox_username")
+        roblox_result    = "No Roblox username on record."
+        roblox_username  = entry.get("roblox_username")
         if roblox_username:
             success, roblox_result = await unban_from_group(roblox_username)
 
@@ -301,7 +337,6 @@ class BlacklistCog(commands.Cog):
         await self.bot.db.remove_blacklist(str(user.id), str(guild.id))
 
         # ── DM the user ───────────────────────────────────────────────────────
-        faction_color = FACTION_COLORS.get(entry["faction"], 0x00FF00)
         try:
             dm_embed = discord.Embed(
                 title="✅ Blacklist Removed",
@@ -326,13 +361,13 @@ class BlacklistCog(commands.Cog):
             timestamp=datetime.datetime.utcnow()
         )
         embed.set_thumbnail(url=user.display_avatar.url)
-        embed.add_field(name="Member", value=user.mention, inline=True)
-        embed.add_field(name="Faction", value=entry["faction"], inline=True)
-        embed.add_field(name="Removed By", value=actor.mention, inline=True)
-        embed.add_field(name="Roblox Action", value=roblox_result, inline=False)
+        embed.add_field(name="Member",       value=user.mention,      inline=True)
+        embed.add_field(name="Faction",      value=entry["faction"],  inline=True)
+        embed.add_field(name="Removed By",   value=actor.mention,     inline=True)
+        embed.add_field(name="Roblox Action", value=roblox_result,    inline=False)
         await interaction.followup.send(embed=embed)
 
-        # ── Update blacklist channel ──────────────────────────────────────────
+        # ── Update blacklist channel immediately ──────────────────────────────
         await self._update_blacklist_channel(guild)
 
         # ── Log ───────────────────────────────────────────────────────────────
@@ -341,20 +376,16 @@ class BlacklistCog(commands.Cog):
             color=discord.Color.green(),
             timestamp=datetime.datetime.utcnow()
         )
-        log_embed.add_field(name="Target", value=f"{user.mention} (`{user.id}`)", inline=True)
-        log_embed.add_field(name="By", value=actor.mention, inline=True)
-        log_embed.add_field(name="Faction", value=entry["faction"], inline=True)
-        log_embed.add_field(name="Roblox", value=f"`{roblox_username or 'N/A'}`", inline=True)
+        log_embed.add_field(name="Target",  value=user.mention,                    inline=True)
+        log_embed.add_field(name="By",      value=actor.mention,                   inline=True)
+        log_embed.add_field(name="Faction", value=entry["faction"],                inline=True)
+        log_embed.add_field(name="Roblox",  value=f"`{roblox_username or 'N/A'}`", inline=True)
         await self.bot.log_action(log_embed)
 
-    # ── Auto-remove faction roles on role add ─────────────────────────────────
+    # ── Auto remove faction roles on role add ─────────────────────────────────
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
-        """
-        If a blacklisted member somehow gets a faction role,
-        remove it instantly.
-        """
         added_roles = set(after.roles) - set(before.roles)
         if not added_roles:
             return
@@ -364,7 +395,7 @@ class BlacklistCog(commands.Cog):
             return
 
         faction_role_ids = set(ALL_FACTION_ROLES)
-        roles_to_strip = [r for r in added_roles if r.id in faction_role_ids]
+        roles_to_strip   = [r for r in added_roles if r.id in faction_role_ids]
 
         if roles_to_strip:
             await after.remove_roles(
