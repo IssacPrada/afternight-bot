@@ -63,6 +63,15 @@ class Database:
                     blacklist_embed_msg_id TEXT,
                     created_at            TIMESTAMP NOT NULL DEFAULT NOW()
                 );
+                CREATE TABLE IF NOT EXISTS warns (
+                    id         SERIAL PRIMARY KEY,
+                    user_id    TEXT      NOT NULL,
+                    guild_id   TEXT      NOT NULL,
+                    reason     TEXT      NOT NULL,
+                    evidence   TEXT,
+                    warned_by  TEXT      NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+                );
             """)
 
     # ── Strikes ───────────────────────────────────────────────────────────────
