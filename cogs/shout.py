@@ -14,23 +14,19 @@ class ShoutCog(commands.Cog):
 
     @app_commands.command(
         name="shout",
-        description="Send an announcement to any channel."
+        description="Copy a message and send it to any channel."
     )
     @app_commands.describe(
-        channel="The channel to send the shout to",
-        message="The message content",
-        ping="Optional role to ping",
-        use_embed="Send as a fancy embed instead of a plain message",
-        embed_color="Embed color as hex code e.g. ff0000 for red (only used with embed)",
-        image_url="Image URL to attach to the embed (only used with embed)"
+        message_id="The ID of the message you want to copy",
+        source_channel="The channel the message is in",
+        destination="The channel to send the copied message to",
+        ping="Optional role to ping with the message"
     )
     async def shout(self, interaction: discord.Interaction,
-                    channel: discord.TextChannel,
-                    message: str,
-                    ping: discord.Role = None,
-                    use_embed: bool = False,
-                    embed_color: str = None,
-                    image_url: str = None):
+                    message_id: str,
+                    source_channel: discord.TextChannel,
+                    destination: discord.TextChannel,
+                    ping: discord.Role = None):
         await interaction.response.defer(ephemeral=True)
 
         actor = interaction.user
@@ -41,40 +37,55 @@ class ShoutCog(commands.Cog):
                 ephemeral=True
             )
 
-        ping_str = ping.mention if ping else ""
-
-        if use_embed:
-            # ── Parse color ───────────────────────────────────────────────────
-            color = discord.Color.blurple()
-            if embed_color:
-                try:
-                    color = discord.Color(int(embed_color.strip("#"), 16))
-                except ValueError:
-                    return await interaction.followup.send(
-                        "❌ Invalid color. Use a hex code like `ff0000` or `#ff0000`.",
-                        ephemeral=True
-                    )
-
-            embed = discord.Embed(
-                description=message,
-                color=color,
-                timestamp=datetime.datetime.utcnow()
+        # ── Fetch the original message ────────────────────────────────────────
+        try:
+            original = await source_channel.fetch_message(int(message_id))
+        except discord.NotFound:
+            return await interaction.followup.send(
+                f"❌ Could not find message `{message_id}` in {source_channel.mention}.\n"
+                "Make sure you copied the right message ID and selected the correct channel.",
+                ephemeral=True
             )
-            embed.set_footer(text=f"Afternight — {actor.display_name}")
+        except ValueError:
+            return await interaction.followup.send(
+                "❌ Invalid message ID. Right click a message → Copy Message ID.",
+                ephemeral=True
+            )
 
-            if image_url:
-                embed.set_image(url=image_url)
+        ping_str = ping.mention if ping else None
 
-            await channel.send(content=ping_str if ping_str else None, embed=embed)
+        # ── Copy embeds if the original has them ──────────────────────────────
+        if original.embeds:
+            await destination.send(
+                content=ping_str,
+                embeds=original.embeds
+            )
+
+        # ── Copy plain text content ───────────────────────────────────────────
+        elif original.content:
+            content = f"{ping_str}\n{original.content}" if ping_str else original.content
+            await destination.send(content=content)
+
+        # ── Copy attachments if any ───────────────────────────────────────────
+        elif original.attachments:
+            files = []
+            for att in original.attachments:
+                files.append(await att.to_file())
+            await destination.send(
+                content=ping_str,
+                files=files
+            )
 
         else:
-            # ── Plain message ─────────────────────────────────────────────────
-            content = f"{ping_str}\n{message}" if ping_str else message
-            await channel.send(content=content)
+            return await interaction.followup.send(
+                "❌ That message has no content, embeds or attachments to copy.",
+                ephemeral=True
+            )
 
         # ── Confirmation ──────────────────────────────────────────────────────
         await interaction.followup.send(
-            f"✅ Shout sent to {channel.mention}.", ephemeral=True
+            f"✅ Message copied from {source_channel.mention} and sent to {destination.mention}.",
+            ephemeral=True
         )
 
         # ── Log ───────────────────────────────────────────────────────────────
@@ -84,10 +95,10 @@ class ShoutCog(commands.Cog):
             timestamp=datetime.datetime.utcnow()
         )
         log_embed.add_field(name="Sent By", value=actor.mention, inline=True)
-        log_embed.add_field(name="Channel", value=channel.mention, inline=True)
+        log_embed.add_field(name="From", value=source_channel.mention, inline=True)
+        log_embed.add_field(name="To", value=destination.mention, inline=True)
+        log_embed.add_field(name="Message ID", value=message_id, inline=True)
         log_embed.add_field(name="Ping", value=ping.mention if ping else "None", inline=True)
-        log_embed.add_field(name="Type", value="Embed" if use_embed else "Plain", inline=True)
-        log_embed.add_field(name="Message", value=message[:500], inline=False)
         await self.bot.log_action(log_embed)
 
 
