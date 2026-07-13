@@ -40,19 +40,20 @@ class AfternightBot(commands.Bot):
 
         # Load all cogs
         for cog in [
-            "cogs.staff",
-            "cogs.strikes",
-            "cogs.activity",
-            "cogs.faction",
-            "cogs.blacklist",
-            "cogs.shout",
-            "cogs.suggestions",
-            "cogs.testing",
-            "cogs.inactivity",
-            "cogs.resign",
-            "cogs.backup",
-            "cogs.massrank",
-        ]:
+    "cogs.staff",
+    "cogs.strikes",
+    "cogs.activity",
+    "cogs.faction",
+    "cogs.blacklist",
+    "cogs.shout",
+    "cogs.suggestions",
+    "cogs.testing",
+    "cogs.inactivity",
+    "cogs.resign",
+    "cogs.backup",
+    "cogs.massrank",
+    "cogs.moderation",
+]:
             await self.load_extension(cog)
             logger.info(f"Loaded cog: {cog}")
 
