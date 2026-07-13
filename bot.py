@@ -41,8 +41,6 @@ class AfternightBot(commands.Bot):
         # Load all cogs
         for cog in ["cogs.staff", "cogs.strikes", "cogs.activity", "cogs.faction", "cogs.blacklist", "cogs.shout", "cogs.suggestions", "cogs.testing", "cogs.inactivity", "cogs.resign", "cogs.backup", "cogs.massrank"]:
 
-
-
             await self.load_extension(cog)
             logger.info(f"Loaded cog: {cog}")
         # Sync slash commands globally (or to a guild for instant testing)
