@@ -39,7 +39,8 @@ class AfternightBot(commands.Bot):
     async def setup_hook(self):
         await self.db.init()
         # Load all cogs
-        for cog in ["cogs.staff", "cogs.strikes", "cogs.activity", "cogs.faction", "cogs.blacklist", "cogs.shout", "cogs.suggestions", "cogs.testing", "cogs.inactivity", "cogs.resign", "cogs.backup"]:
+        for cog in ["cogs.staff", "cogs.strikes", "cogs.activity", "cogs.faction", "cogs.blacklist", "cogs.shout", "cogs.suggestions", "cogs.testing", "cogs.inactivity", "cogs.resign", "cogs.backup", "cogs.massrank"]:
+
 
 
             await self.load_extension(cog)
