@@ -181,3 +181,31 @@ class Database:
                 guild_id
             )
             return [dict(r) for r in rows]
+
+# ── Warns ─────────────────────────────────────────────────────────────────
+
+async def add_warn(self, user_id: str, guild_id: str, reason: str,
+                   evidence: str, warned_by: str):
+    async with self.pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO warns (user_id, guild_id, reason, evidence, warned_by) "
+            "VALUES ($1, $2, $3, $4, $5)",
+            user_id, guild_id, reason, evidence, warned_by
+        )
+
+async def get_warns(self, user_id: str, guild_id: str) -> list:
+    async with self.pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT reason, evidence, warned_by, created_at FROM warns "
+            "WHERE user_id=$1 AND guild_id=$2 ORDER BY created_at ASC",
+            user_id, guild_id
+        )
+        return [dict(r) for r in rows]
+
+async def clear_warns(self, user_id: str, guild_id: str) -> int:
+    async with self.pool.acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM warns WHERE user_id=$1 AND guild_id=$2",
+            user_id, guild_id
+        )
+        return int(result.split()[-1])
