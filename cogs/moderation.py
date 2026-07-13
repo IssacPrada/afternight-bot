@@ -1,5 +1,5 @@
 """
-cogs/moderation.py — /warn, /viewwarns, /clearwarns, /ban commands
+cogs/moderation.py — /warn, /viewwarns, /clearwarns, /ban, /kick commands
 """
 import discord
 from discord import app_commands
@@ -11,12 +11,19 @@ from discord.ext import tasks
 # ── Config ────────────────────────────────────────────────────────────────────
 WARN_LOG_CHANNEL = 1388022887725924372
 BAN_LOG_CHANNEL  = 1388022794729558077
+KICK_LOG_CHANNEL = 1526138824173031545
 APPEAL_SERVER    = "https://discord.gg/dQAbatSEcw"
-ADMIN_RANK_INDEX = 4
+
+ADMIN_RANK_INDEX = 4  # Administrator+
+MOD_RANK_INDEX   = 1  # Moderator+
 
 
 def is_admin_plus(member: discord.Member) -> bool:
     return get_member_rank_index(member) >= ADMIN_RANK_INDEX
+
+
+def is_mod_plus(member: discord.Member) -> bool:
+    return get_member_rank_index(member) >= MOD_RANK_INDEX
 
 
 class ModerationCog(commands.Cog):
@@ -290,8 +297,8 @@ class ModerationCog(commands.Cog):
                 value=f"{user.mention} (`{user.id}`)",
                 inline=False
             )
-            log_embed.add_field(name="Cleared By", value=actor.mention,            inline=True)
-            log_embed.add_field(name="Removed",    value=f"{removed} warning(s)",  inline=True)
+            log_embed.add_field(name="Cleared By", value=actor.mention,           inline=True)
+            log_embed.add_field(name="Removed",    value=f"{removed} warning(s)", inline=True)
             await log_channel.send(embed=log_embed)
 
     # ── /ban ──────────────────────────────────────────────────────────────────
@@ -325,31 +332,24 @@ class ModerationCog(commands.Cog):
 
         if not is_admin_plus(actor):
             return await interaction.followup.send(
-                "❌ Only Administrators or above may use `/ban`.",
-                ephemeral=True
+                "❌ Only Administrators or above may use `/ban`.", ephemeral=True
             )
-
         if user == actor:
             return await interaction.followup.send(
                 "❌ You cannot ban yourself.", ephemeral=True
             )
-
         if user.top_role >= interaction.guild.me.top_role:
             return await interaction.followup.send(
                 "❌ I cannot ban this user — their role is higher than mine.",
                 ephemeral=True
             )
-
         if temporary == "yes" and not unban_date:
             return await interaction.followup.send(
-                "❌ Please provide an unban date for a temporary ban.",
-                ephemeral=True
+                "❌ Please provide an unban date for a temporary ban.", ephemeral=True
             )
-
         if delete_days < 0 or delete_days > 7:
             return await interaction.followup.send(
-                "❌ Delete days must be between 0 and 7.",
-                ephemeral=True
+                "❌ Delete days must be between 0 and 7.", ephemeral=True
             )
 
         guild        = interaction.guild
@@ -388,13 +388,12 @@ class ModerationCog(commands.Cog):
             delete_message_days=delete_days
         )
 
-        # ── Save temp ban to database ─────────────────────────────────────────
         if is_temp:
             await self.bot.db.add_temp_ban(
                 str(user.id), str(guild.id), unban_date, reason, str(actor.id)
             )
 
-        # ── Log embed ─────────────────────────────────────────────────────────
+        # ── Log ───────────────────────────────────────────────────────────────
         log_embed = discord.Embed(
             title="🔨 Member Banned",
             color=discord.Color.red(),
@@ -406,9 +405,9 @@ class ModerationCog(commands.Cog):
             value=f"{user.mention} (`{user.id}`)",
             inline=False
         )
-        log_embed.add_field(name="Reason",              value=reason,        inline=False)
-        log_embed.add_field(name="Temporary Or Perm",   value=ban_type_str,  inline=False)
-        log_embed.add_field(name="Evidence",            value=evidence,      inline=False)
+        log_embed.add_field(name="Reason",            value=reason,        inline=False)
+        log_embed.add_field(name="Temporary Or Perm", value=ban_type_str,  inline=False)
+        log_embed.add_field(name="Evidence",          value=evidence,      inline=False)
         log_embed.add_field(
             name="Banned By",
             value=f"{actor.mention} (`{actor.id}`)",
@@ -425,15 +424,105 @@ class ModerationCog(commands.Cog):
         if log_channel:
             await log_channel.send(embed=log_embed)
 
-        # ── Confirmation ──────────────────────────────────────────────────────
         confirm_embed = discord.Embed(
             title="✅ Member Banned",
             color=discord.Color.red(),
             timestamp=datetime.datetime.utcnow()
         )
-        confirm_embed.add_field(name="Member",  value=user.mention,  inline=True)
-        confirm_embed.add_field(name="Reason",  value=reason,        inline=True)
-        confirm_embed.add_field(name="Type",    value=ban_type_str,  inline=True)
+        confirm_embed.add_field(name="Member", value=user.mention,  inline=True)
+        confirm_embed.add_field(name="Reason", value=reason,        inline=True)
+        confirm_embed.add_field(name="Type",   value=ban_type_str,  inline=True)
+        await interaction.followup.send(embed=confirm_embed, ephemeral=True)
+
+    # ── /kick ─────────────────────────────────────────────────────────────────
+
+    @app_commands.command(
+        name="kick",
+        description="Kick a member from the server."
+    )
+    @app_commands.describe(
+        user="The member to kick",
+        reason="Reason for the kick",
+        evidence="Evidence link or description (optional)"
+    )
+    async def kick(self, interaction: discord.Interaction,
+                   user: discord.Member,
+                   reason: str,
+                   evidence: str = "None provided"):
+        await interaction.response.defer(ephemeral=True)
+
+        actor = interaction.user
+
+        if not is_mod_plus(actor):
+            return await interaction.followup.send(
+                "❌ Only Moderators or above may use `/kick`.", ephemeral=True
+            )
+        if user == actor:
+            return await interaction.followup.send(
+                "❌ You cannot kick yourself.", ephemeral=True
+            )
+        if user.top_role >= interaction.guild.me.top_role:
+            return await interaction.followup.send(
+                "❌ I cannot kick this user — their role is higher than mine.",
+                ephemeral=True
+            )
+
+        guild = interaction.guild
+
+        # ── DM before kick ────────────────────────────────────────────────────
+        try:
+            dm_embed = discord.Embed(
+                title="👢 You Have Been Kicked",
+                color=discord.Color.orange(),
+                timestamp=datetime.datetime.utcnow()
+            )
+            dm_embed.description = (
+                f"You have been **kicked** from **Afternight Legacies**.\n\n"
+                f"**Reason:** {reason}\n\n"
+                f"You may rejoin the server, but please ensure you follow the rules.\n\n"
+                f"If you believe this was a mistake, you may appeal here:\n"
+                f"{APPEAL_SERVER}"
+            )
+            dm_embed.set_footer(text="Afternight Moderation")
+            await user.send(embed=dm_embed)
+        except discord.Forbidden:
+            pass
+
+        # ── Execute kick ──────────────────────────────────────────────────────
+        await guild.kick(user, reason=f"{reason} | Kicked by {actor}")
+
+        # ── Log ───────────────────────────────────────────────────────────────
+        log_embed = discord.Embed(
+            title="👢 Member Kicked",
+            color=discord.Color.orange(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        log_embed.set_thumbnail(url=user.display_avatar.url)
+        log_embed.add_field(
+            name="Discord ID",
+            value=f"{user.mention} (`{user.id}`)",
+            inline=False
+        )
+        log_embed.add_field(name="Reason",   value=reason,   inline=False)
+        log_embed.add_field(name="Evidence", value=evidence, inline=False)
+        log_embed.add_field(
+            name="Kicked By",
+            value=f"{actor.mention} (`{actor.id}`)",
+            inline=False
+        )
+        log_embed.set_footer(text=f"User ID: {user.id}")
+
+        log_channel = guild.get_channel(KICK_LOG_CHANNEL)
+        if log_channel:
+            await log_channel.send(embed=log_embed)
+
+        confirm_embed = discord.Embed(
+            title="✅ Member Kicked",
+            color=discord.Color.orange(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        confirm_embed.add_field(name="Member", value=user.mention, inline=True)
+        confirm_embed.add_field(name="Reason", value=reason,       inline=True)
         await interaction.followup.send(embed=confirm_embed, ephemeral=True)
 
 
