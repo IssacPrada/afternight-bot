@@ -43,9 +43,12 @@ class AfternightBot(commands.Bot):
 
             await self.load_extension(cog)
             logger.info(f"Loaded cog: {cog}")
-        # Sync slash commands globally (or to a guild for instant testing)
-        synced = await self.tree.sync()
-        logger.info(f"Synced {len(synced)} slash command(s)")
+        # Sync globally AND to your specific guild for instant update
+synced = await self.tree.sync()
+guild_obj = discord.Object(id=1387648629065650247)  # Your server ID
+self.tree.copy_global_to(guild=guild_obj)
+await self.tree.sync(guild=guild_obj)
+logger.info(f"Synced {len(synced)} slash command(s)")
 
     async def on_ready(self):
         logger.info(f"Logged in as {self.user} (ID: {self.user.id})")
