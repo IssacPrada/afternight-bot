@@ -5,7 +5,6 @@ from dotenv import load_dotenv
 
 load_dotenv()  # Must be before anything else reads os.getenv
 
-load_dotenv()
 print("DATABASE_URL:", os.getenv("DATABASE_URL"))
 
 import discord
@@ -40,15 +39,15 @@ class AfternightBot(commands.Bot):
         await self.db.init()
         # Load all cogs
         for cog in ["cogs.staff", "cogs.strikes", "cogs.activity", "cogs.faction", "cogs.blacklist", "cogs.shout", "cogs.suggestions", "cogs.testing", "cogs.inactivity", "cogs.resign", "cogs.backup", "cogs.massrank"]:
-
             await self.load_extension(cog)
             logger.info(f"Loaded cog: {cog}")
-        # Sync globally AND to your specific guild for instant update
-synced = await self.tree.sync()
-guild_obj = discord.Object(id=1387648629065650247)  # Your server ID
-self.tree.copy_global_to(guild=guild_obj)
-await self.tree.sync(guild=guild_obj)
-logger.info(f"Synced {len(synced)} slash command(s)")
+            
+        # FIX: Kept these lines indented properly inside setup_hook
+        synced = await self.tree.sync()
+        guild_obj = discord.Object(id=1387648629065650247)  # Your server ID
+        self.tree.copy_global_to(guild=guild_obj)
+        await self.tree.sync(guild=guild_obj)
+        logger.info(f"Synced {len(synced)} slash command(s)")
 
     async def on_ready(self):
         logger.info(f"Logged in as {self.user} (ID: {self.user.id})")
