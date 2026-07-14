@@ -1,5 +1,5 @@
 """
-cogs/moderation.py — /warn, /viewwarns, /clearwarns, /ban, /kick, /mute, /unmute, /unban, /lockdownserver, /unlockdownserver
+cogs/moderation.py — Full moderation suite
 """
 import discord
 from discord import app_commands
@@ -20,6 +20,20 @@ APPEAL_SERVER        = "https://discord.gg/dQAbatSEcw"
 ADMIN_RANK_INDEX = 4
 MOD_RANK_INDEX   = 1
 
+# ── Lockdown targets ──────────────────────────────────────────────────────────
+LOCKDOWN_TEXT_CHANNELS = [
+    1520278354425675826,
+    1458296382178852886,
+    1458296167455785185,
+    1458296246719484039,
+    1392580593727967386,
+]
+
+LOCKDOWN_VOICE_CHANNELS = [
+    1388025901736005764,
+    1388025936728821780,
+]
+
 
 def is_admin_plus(member: discord.Member) -> bool:
     return get_member_rank_index(member) >= ADMIN_RANK_INDEX
@@ -27,6 +41,86 @@ def is_admin_plus(member: discord.Member) -> bool:
 
 def is_mod_plus(member: discord.Member) -> bool:
     return get_member_rank_index(member) >= MOD_RANK_INDEX
+
+
+def parse_duration(duration: str) -> datetime.timedelta | None:
+    duration = duration.lower().strip()
+    try:
+        if duration.endswith("m"):
+            return datetime.timedelta(minutes=int(duration[:-1]))
+        elif duration.endswith("h"):
+            return datetime.timedelta(hours=int(duration[:-1]))
+        elif duration.endswith("d"):
+            return datetime.timedelta(days=int(duration[:-1]))
+    except ValueError:
+        pass
+    return None
+
+
+# ── Clear Warns Select ────────────────────────────────────────────────────────
+
+class WarnSelect(discord.ui.Select):
+    def __init__(self, warns: list, user: discord.Member, bot):
+        self.warn_list = warns
+        self.target    = user
+        self.bot       = bot
+
+        options = [
+            discord.SelectOption(
+                label=f"Warning {i + 1} — {str(w.get('created_at', ''))[:10]}",
+                description=w["reason"][:100],
+                value=str(i)
+            )
+            for i, w in enumerate(warns[:25])
+        ]
+        options.insert(0, discord.SelectOption(
+            label="⚠️ Clear ALL warnings",
+            description="Remove every warning for this user",
+            value="all"
+        ))
+
+        super().__init__(
+            placeholder="Select a warning to remove...",
+            options=options,
+            min_values=1,
+            max_values=1
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        guild = interaction.guild
+
+        if self.values[0] == "all":
+            removed = await self.bot.db.clear_warns(str(self.target.id), str(guild.id))
+            await interaction.followup.send(
+                f"✅ Cleared all **{removed}** warning(s) from {self.target.mention}.",
+                ephemeral=True
+            )
+        else:
+            index  = int(self.values[0])
+            warn   = self.warn_list[index]
+            removed = await self.bot.db.delete_warn_by_index(
+                str(self.target.id), str(guild.id), index
+            )
+            if removed:
+                await interaction.followup.send(
+                    f"✅ Removed warning {index + 1} from {self.target.mention}:\n"
+                    f"**Reason:** {warn['reason']}",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send(
+                    "❌ Could not remove that warning.", ephemeral=True
+                )
+
+        self.disabled = True
+        await interaction.message.edit(view=self.view)
+
+
+class WarnSelectView(discord.ui.View):
+    def __init__(self, warns: list, user: discord.Member, bot):
+        super().__init__(timeout=60)
+        self.add_item(WarnSelect(warns, user, bot))
 
 
 class ModerationCog(commands.Cog):
@@ -52,43 +146,22 @@ class ModerationCog(commands.Cog):
                     user = await self.bot.fetch_user(int(ban["user_id"]))
                     await guild.unban(user, reason="Temporary ban expired")
                     await self.bot.db.mark_temp_ban_expired(ban["id"])
-
                     try:
-                        dm_embed = discord.Embed(
-                            title="✅ You Have Been Unbanned",
-                            color=discord.Color.green(),
-                            timestamp=datetime.datetime.utcnow()
-                        )
-                        dm_embed.description = (
-                            f"Your temporary ban from **Afternight Legacies** has expired "
-                            f"and you have been unbanned.\n\n"
+                        dm = discord.Embed(title="✅ You Have Been Unbanned", color=discord.Color.green(), timestamp=datetime.datetime.utcnow())
+                        dm.description = (
+                            f"Your temporary ban from **Afternight Legacies** has expired and you have been unbanned.\n\n"
                             f"You may rejoin the server. Please follow the rules.\n\n"
-                            f"If you believe your ban was unfair, you may still appeal:\n"
-                            f"{APPEAL_SERVER}"
+                            f"If you believe your ban was unfair, you may still appeal:\n{APPEAL_SERVER}"
                         )
-                        await user.send(embed=dm_embed)
+                        await user.send(embed=dm)
                     except discord.Forbidden:
                         pass
-
                     log_channel = guild.get_channel(BAN_LOG_CHANNEL)
                     if log_channel:
-                        log_embed = discord.Embed(
-                            title="✅ Temp Ban Expired — Auto Unbanned",
-                            color=discord.Color.green(),
-                            timestamp=datetime.datetime.utcnow()
-                        )
-                        log_embed.add_field(
-                            name="Discord ID",
-                            value=f"{user.mention} (`{user.id}`)",
-                            inline=False
-                        )
-                        log_embed.add_field(
-                            name="Reason",
-                            value="Temporary ban duration expired.",
-                            inline=False
-                        )
-                        await log_channel.send(embed=log_embed)
-
+                        e = discord.Embed(title="✅ Temp Ban Expired — Auto Unbanned", color=discord.Color.green(), timestamp=datetime.datetime.utcnow())
+                        e.add_field(name="Discord ID", value=f"{user.mention} (`{user.id}`)", inline=False)
+                        e.add_field(name="Reason", value="Temporary ban duration expired.", inline=False)
+                        await log_channel.send(embed=e)
                 except Exception:
                     pass
         except Exception:
@@ -98,17 +171,31 @@ class ModerationCog(commands.Cog):
     async def before_check_unbans(self):
         await self.bot.wait_until_ready()
 
+    # ── Helper: collect attachments from interaction ───────────────────────────
+
+    def _format_evidence(self, evidence: str, attachments: list[discord.Attachment]) -> str:
+        parts = []
+        if evidence and evidence != "None provided":
+            parts.append(evidence)
+        for att in attachments:
+            parts.append(att.url)
+        return "\n".join(parts) if parts else "None provided"
+
     # ── /warn ─────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="warn", description="Warn a community member.")
     @app_commands.describe(
         user="The member to warn",
         reason="Reason for the warning",
-        evidence="Evidence link or description (optional)"
+        evidence="Evidence link(s) — separate multiple with commas",
+        attachment1="Evidence attachment (optional)",
+        attachment2="Second evidence attachment (optional)"
     )
     async def warn(self, interaction: discord.Interaction,
                    user: discord.Member, reason: str,
-                   evidence: str = "None provided"):
+                   evidence: str = "None provided",
+                   attachment1: discord.Attachment = None,
+                   attachment2: discord.Attachment = None):
         await interaction.response.defer(ephemeral=True)
 
         actor = interaction.user
@@ -119,18 +206,21 @@ class ModerationCog(commands.Cog):
         if user == actor:
             return await interaction.followup.send("❌ You cannot warn yourself.", ephemeral=True)
 
+        attachments   = [a for a in [attachment1, attachment2] if a]
+        evidence_full = self._format_evidence(evidence, attachments)
+
         guild = interaction.guild
-        await self.bot.db.add_warn(str(user.id), str(guild.id), reason, evidence, str(actor.id))
+        await self.bot.db.add_warn(str(user.id), str(guild.id), reason, evidence_full, str(actor.id))
         warns      = await self.bot.db.get_warns(str(user.id), str(guild.id))
         warn_count = len(warns)
 
         log_embed = discord.Embed(title="⚠️ Warning Issued", color=discord.Color.yellow(), timestamp=datetime.datetime.utcnow())
         log_embed.set_thumbnail(url=user.display_avatar.url)
-        log_embed.add_field(name="Discord ID", value=f"{user.mention} (`{user.id}`)", inline=False)
-        log_embed.add_field(name="Reason",     value=reason,   inline=False)
-        log_embed.add_field(name="Evidence",   value=evidence, inline=False)
-        log_embed.add_field(name="Warned By",  value=f"{actor.mention} (`{actor.id}`)", inline=True)
-        log_embed.add_field(name="Total Warnings", value=f"**{warn_count}** warning(s)", inline=True)
+        log_embed.add_field(name="Discord ID",     value=f"{user.mention} (`{user.id}`)", inline=False)
+        log_embed.add_field(name="Reason",         value=reason,                          inline=False)
+        log_embed.add_field(name="Evidence",       value=evidence_full,                   inline=False)
+        log_embed.add_field(name="Warned By",      value=f"{actor.mention} (`{actor.id}`)", inline=True)
+        log_embed.add_field(name="Total Warnings", value=f"**{warn_count}** warning(s)",  inline=True)
         log_embed.set_footer(text=f"User ID: {user.id}")
 
         if warn_count > 1:
@@ -144,7 +234,7 @@ class ModerationCog(commands.Cog):
         if log_channel:
             await log_channel.send(embed=log_embed)
 
-        confirm = discord.Embed(title="✅ Warning Issued Successfully", color=discord.Color.green(), timestamp=datetime.datetime.utcnow())
+        confirm = discord.Embed(title="✅ Warning Issued", color=discord.Color.green(), timestamp=datetime.datetime.utcnow())
         confirm.add_field(name="Member",         value=user.mention,    inline=True)
         confirm.add_field(name="Reason",         value=reason,          inline=True)
         confirm.add_field(name="Total Warnings", value=f"{warn_count}", inline=True)
@@ -202,8 +292,8 @@ class ModerationCog(commands.Cog):
 
     # ── /clearwarns ───────────────────────────────────────────────────────────
 
-    @app_commands.command(name="clearwarns", description="Clear all warnings for a member.")
-    @app_commands.describe(user="The member whose warnings to clear")
+    @app_commands.command(name="clearwarns", description="Clear one or all warnings for a member.")
+    @app_commands.describe(user="The member whose warnings to manage")
     async def clearwarns(self, interaction: discord.Interaction, user: discord.Member):
         await interaction.response.defer(ephemeral=True)
 
@@ -211,35 +301,34 @@ class ModerationCog(commands.Cog):
         if not is_staff(actor):
             return await interaction.followup.send("❌ Only staff members may clear warnings.", ephemeral=True)
 
-        guild   = interaction.guild
-        removed = await self.bot.db.clear_warns(str(user.id), str(guild.id))
+        guild = interaction.guild
+        warns = await self.bot.db.get_warns(str(user.id), str(guild.id))
+
+        if not warns:
+            return await interaction.followup.send(
+                f"❌ {user.mention} has no warnings to clear.", ephemeral=True
+            )
 
         embed = discord.Embed(
-            title="✅ Warnings Cleared",
-            description=f"Cleared **{removed}** warning(s) from {user.mention}.",
-            color=discord.Color.green(),
+            title=f"🗑️ Clear Warnings — {user.display_name}",
+            description=f"{user.mention} has **{len(warns)}** warning(s). Select which to remove:",
+            color=discord.Color.orange(),
             timestamp=datetime.datetime.utcnow()
         )
-        embed.set_footer(text=f"Cleared by {actor.display_name}")
-        await interaction.followup.send(embed=embed)
-
-        log_channel = guild.get_channel(WARN_LOG_CHANNEL)
-        if log_channel:
-            log_embed = discord.Embed(title="🗑️ Warnings Cleared", color=discord.Color.green(), timestamp=datetime.datetime.utcnow())
-            log_embed.add_field(name="Discord ID",  value=f"{user.mention} (`{user.id}`)", inline=False)
-            log_embed.add_field(name="Cleared By",  value=actor.mention,                   inline=True)
-            log_embed.add_field(name="Removed",     value=f"{removed} warning(s)",         inline=True)
-            await log_channel.send(embed=log_embed)
+        view = WarnSelectView(warns, user, self.bot)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
     # ── /ban ──────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="ban", description="Ban a member from the server.")
     @app_commands.describe(
         user="The member to ban", reason="Reason for the ban",
-        evidence="Evidence link or description (optional)",
+        evidence="Evidence link(s) — separate multiple with commas",
         temporary="Is this a temporary ban?",
         unban_date="If temporary, when they get unbanned (e.g. July 20 2026)",
-        delete_days="Number of days of messages to delete (0-7, default 0)"
+        delete_days="Number of days of messages to delete (0-7)",
+        attachment1="Evidence attachment (optional)",
+        attachment2="Second evidence attachment (optional)"
     )
     @app_commands.choices(temporary=[
         app_commands.Choice(name="Yes — Temporary Ban", value="yes"),
@@ -247,7 +336,10 @@ class ModerationCog(commands.Cog):
     ])
     async def ban(self, interaction: discord.Interaction,
                   user: discord.Member, reason: str, temporary: str,
-                  evidence: str = "None provided", unban_date: str = None, delete_days: int = 0):
+                  evidence: str = "None provided", unban_date: str = None,
+                  delete_days: int = 0,
+                  attachment1: discord.Attachment = None,
+                  attachment2: discord.Attachment = None):
         await interaction.response.defer(ephemeral=True)
 
         actor = interaction.user
@@ -261,6 +353,9 @@ class ModerationCog(commands.Cog):
             return await interaction.followup.send("❌ Please provide an unban date for a temporary ban.", ephemeral=True)
         if delete_days < 0 or delete_days > 7:
             return await interaction.followup.send("❌ Delete days must be between 0 and 7.", ephemeral=True)
+
+        attachments   = [a for a in [attachment1, attachment2] if a]
+        evidence_full = self._format_evidence(evidence, attachments)
 
         guild        = interaction.guild
         is_temp      = temporary == "yes"
@@ -289,12 +384,12 @@ class ModerationCog(commands.Cog):
 
         log_embed = discord.Embed(title="🔨 Member Banned", color=discord.Color.red(), timestamp=datetime.datetime.utcnow())
         log_embed.set_thumbnail(url=user.display_avatar.url)
-        log_embed.add_field(name="Discord ID",          value=f"{user.mention} (`{user.id}`)", inline=False)
-        log_embed.add_field(name="Reason",              value=reason,                          inline=False)
-        log_embed.add_field(name="Temporary Or Perm",   value=ban_type_str,                    inline=False)
-        log_embed.add_field(name="Evidence",            value=evidence,                        inline=False)
-        log_embed.add_field(name="Banned By",           value=f"{actor.mention} (`{actor.id}`)", inline=True)
-        log_embed.add_field(name="Messages Deleted",    value=f"{delete_days} day(s)",         inline=True)
+        log_embed.add_field(name="Discord ID",        value=f"{user.mention} (`{user.id}`)", inline=False)
+        log_embed.add_field(name="Reason",            value=reason,                          inline=False)
+        log_embed.add_field(name="Temporary Or Perm", value=ban_type_str,                    inline=False)
+        log_embed.add_field(name="Evidence",          value=evidence_full,                   inline=False)
+        log_embed.add_field(name="Banned By",         value=f"{actor.mention} (`{actor.id}`)", inline=True)
+        log_embed.add_field(name="Messages Deleted",  value=f"{delete_days} day(s)",         inline=True)
         log_embed.set_footer(text=f"User ID: {user.id}")
 
         log_channel = guild.get_channel(BAN_LOG_CHANNEL)
@@ -312,10 +407,15 @@ class ModerationCog(commands.Cog):
     @app_commands.command(name="kick", description="Kick a member from the server.")
     @app_commands.describe(
         user="The member to kick", reason="Reason for the kick",
-        evidence="Evidence link or description (optional)"
+        evidence="Evidence link(s) — separate multiple with commas",
+        attachment1="Evidence attachment (optional)",
+        attachment2="Second evidence attachment (optional)"
     )
     async def kick(self, interaction: discord.Interaction,
-                   user: discord.Member, reason: str, evidence: str = "None provided"):
+                   user: discord.Member, reason: str,
+                   evidence: str = "None provided",
+                   attachment1: discord.Attachment = None,
+                   attachment2: discord.Attachment = None):
         await interaction.response.defer(ephemeral=True)
 
         actor = interaction.user
@@ -326,7 +426,9 @@ class ModerationCog(commands.Cog):
         if user.top_role >= interaction.guild.me.top_role:
             return await interaction.followup.send("❌ I cannot kick this user — their role is higher than mine.", ephemeral=True)
 
-        guild = interaction.guild
+        attachments   = [a for a in [attachment1, attachment2] if a]
+        evidence_full = self._format_evidence(evidence, attachments)
+        guild         = interaction.guild
 
         try:
             dm = discord.Embed(title="👢 You Have Been Kicked", color=discord.Color.orange(), timestamp=datetime.datetime.utcnow())
@@ -347,7 +449,7 @@ class ModerationCog(commands.Cog):
         log_embed.set_thumbnail(url=user.display_avatar.url)
         log_embed.add_field(name="Discord ID", value=f"{user.mention} (`{user.id}`)", inline=False)
         log_embed.add_field(name="Reason",     value=reason,                          inline=False)
-        log_embed.add_field(name="Evidence",   value=evidence,                        inline=False)
+        log_embed.add_field(name="Evidence",   value=evidence_full,                   inline=False)
         log_embed.add_field(name="Kicked By",  value=f"{actor.mention} (`{actor.id}`)", inline=False)
         log_embed.set_footer(text=f"User ID: {user.id}")
 
@@ -365,12 +467,16 @@ class ModerationCog(commands.Cog):
     @app_commands.command(name="mute", description="Timeout (mute) a member.")
     @app_commands.describe(
         user="The member to mute", reason="Reason for the mute",
-        duration="Duration (e.g. 10m, 1h, 1d, 7d — max 28 days)",
-        evidence="Evidence link or description (optional)"
+        duration="Duration (e.g. 10m, 1h, 1d — max 28 days)",
+        evidence="Evidence link(s) — separate multiple with commas",
+        attachment1="Evidence attachment (optional)",
+        attachment2="Second evidence attachment (optional)"
     )
     async def mute(self, interaction: discord.Interaction,
                    user: discord.Member, reason: str, duration: str,
-                   evidence: str = "None provided"):
+                   evidence: str = "None provided",
+                   attachment1: discord.Attachment = None,
+                   attachment2: discord.Attachment = None):
         await interaction.response.defer(ephemeral=True)
 
         actor = interaction.user
@@ -381,21 +487,14 @@ class ModerationCog(commands.Cog):
         if user.top_role >= interaction.guild.me.top_role:
             return await interaction.followup.send("❌ I cannot mute this user — their role is higher than mine.", ephemeral=True)
 
-        duration = duration.lower().strip()
-        try:
-            if duration.endswith("m"):
-                delta = datetime.timedelta(minutes=int(duration[:-1]))
-            elif duration.endswith("h"):
-                delta = datetime.timedelta(hours=int(duration[:-1]))
-            elif duration.endswith("d"):
-                delta = datetime.timedelta(days=int(duration[:-1]))
-            else:
-                return await interaction.followup.send("❌ Invalid duration. Use `10m`, `1h`, `1d` etc.", ephemeral=True)
-        except ValueError:
-            return await interaction.followup.send("❌ Invalid duration. Examples: `10m`, `2h`, `3d`", ephemeral=True)
-
+        delta = parse_duration(duration)
+        if not delta:
+            return await interaction.followup.send("❌ Invalid duration. Use `10m`, `1h`, `1d` etc.", ephemeral=True)
         if delta > datetime.timedelta(days=28):
             return await interaction.followup.send("❌ Maximum mute duration is 28 days.", ephemeral=True)
+
+        attachments   = [a for a in [attachment1, attachment2] if a]
+        evidence_full = self._format_evidence(evidence, attachments)
 
         until     = datetime.datetime.utcnow() + delta
         until_str = until.strftime("%B %d, %Y at %I:%M %p UTC")
@@ -419,10 +518,10 @@ class ModerationCog(commands.Cog):
         log_embed = discord.Embed(title="🔇 Member Muted", color=discord.Color.dark_grey(), timestamp=datetime.datetime.utcnow())
         log_embed.set_thumbnail(url=user.display_avatar.url)
         log_embed.add_field(name="Discord ID", value=f"{user.mention} (`{user.id}`)", inline=False)
-        log_embed.add_field(name="Reason",     value=reason,     inline=False)
-        log_embed.add_field(name="Duration",   value=duration,   inline=True)
-        log_embed.add_field(name="Unmuted",    value=until_str,  inline=True)
-        log_embed.add_field(name="Evidence",   value=evidence,   inline=False)
+        log_embed.add_field(name="Reason",     value=reason,                          inline=False)
+        log_embed.add_field(name="Duration",   value=duration,                        inline=True)
+        log_embed.add_field(name="Unmuted",    value=until_str,                       inline=True)
+        log_embed.add_field(name="Evidence",   value=evidence_full,                   inline=False)
         log_embed.add_field(name="Muted By",   value=f"{actor.mention} (`{actor.id}`)", inline=False)
         log_embed.set_footer(text=f"User ID: {user.id}")
 
@@ -438,26 +537,25 @@ class ModerationCog(commands.Cog):
 
     # ── /unmute ───────────────────────────────────────────────────────────────
 
-    @app_commands.command(name="unmute", description="Remove a timeout (unmute) from a member.")
-    @app_commands.describe(user="The member to unmute", reason="Reason for removing the mute (optional)")
+    @app_commands.command(name="unmute", description="Remove a timeout from a member.")
+    @app_commands.describe(user="The member to unmute", reason="Reason (optional)")
     async def unmute(self, interaction: discord.Interaction,
                      user: discord.Member, reason: str = "Mute lifted by staff"):
         await interaction.response.defer(ephemeral=True)
 
-        actor = interaction.user
-        if not is_staff(actor):
+        if not is_staff(interaction.user):
             return await interaction.followup.send("❌ Only staff members may use `/unmute`.", ephemeral=True)
         if not user.is_timed_out():
             return await interaction.followup.send(f"❌ {user.mention} is not currently muted.", ephemeral=True)
 
+        actor = interaction.user
         await user.timeout(None, reason=f"{reason} | Unmuted by {actor}")
 
         try:
             dm = discord.Embed(title="🔊 You Have Been Unmuted", color=discord.Color.green(), timestamp=datetime.datetime.utcnow())
             dm.description = (
                 f"Your mute in **Afternight Legacies** has been lifted.\n\n"
-                f"**Reason:** {reason}\n\n"
-                f"Please ensure you follow the server rules going forward."
+                f"**Reason:** {reason}\n\nPlease ensure you follow the server rules."
             )
             dm.set_footer(text="Afternight Moderation")
             await user.send(embed=dm)
@@ -483,10 +581,7 @@ class ModerationCog(commands.Cog):
     # ── /unban ────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="unban", description="Unban a user from the server.")
-    @app_commands.describe(
-        user_id="The Discord ID of the user to unban",
-        reason="Reason for the unban"
-    )
+    @app_commands.describe(user_id="The Discord ID of the user to unban", reason="Reason for the unban")
     async def unban(self, interaction: discord.Interaction,
                     user_id: str, reason: str = "No reason provided"):
         await interaction.response.defer(ephemeral=True)
@@ -496,7 +591,6 @@ class ModerationCog(commands.Cog):
             return await interaction.followup.send("❌ Only Administrators or above may use `/unban`.", ephemeral=True)
 
         guild = interaction.guild
-
         try:
             user = await self.bot.fetch_user(int(user_id))
         except (ValueError, discord.NotFound):
@@ -505,9 +599,8 @@ class ModerationCog(commands.Cog):
         try:
             await guild.unban(user, reason=f"{reason} | Unbanned by {actor}")
         except discord.NotFound:
-            return await interaction.followup.send(f"❌ {user.mention} is not banned from this server.", ephemeral=True)
+            return await interaction.followup.send(f"❌ {user} is not banned from this server.", ephemeral=True)
 
-        # ── Mark temp ban as expired if exists ────────────────────────────────
         try:
             expired = await self.bot.db.get_expired_temp_bans()
             for ban in expired:
@@ -516,20 +609,17 @@ class ModerationCog(commands.Cog):
         except Exception:
             pass
 
-        # ── DM the user ───────────────────────────────────────────────────────
         try:
             dm = discord.Embed(title="✅ You Have Been Unbanned", color=discord.Color.green(), timestamp=datetime.datetime.utcnow())
             dm.description = (
                 f"You have been **unbanned** from **Afternight Legacies**.\n\n"
-                f"**Reason:** {reason}\n\n"
-                f"You may rejoin the server. Please ensure you follow the rules."
+                f"**Reason:** {reason}\n\nYou may rejoin the server. Please follow the rules."
             )
             dm.set_footer(text="Afternight Moderation")
             await user.send(embed=dm)
         except discord.Forbidden:
             pass
 
-        # ── Log ───────────────────────────────────────────────────────────────
         log_embed = discord.Embed(title="✅ Member Unbanned", color=discord.Color.green(), timestamp=datetime.datetime.utcnow())
         log_embed.add_field(name="Discord ID",  value=f"{user.mention} (`{user.id}`)", inline=False)
         log_embed.add_field(name="Reason",      value=reason,                          inline=False)
@@ -547,7 +637,7 @@ class ModerationCog(commands.Cog):
 
     # ── /lockdownserver ───────────────────────────────────────────────────────
 
-    @app_commands.command(name="lockdownserver", description="Lock all channels so only staff can speak.")
+    @app_commands.command(name="lockdownserver", description="Lock specific channels so only staff can speak.")
     @app_commands.describe(reason="Reason for the lockdown (optional)")
     async def lockdownserver(self, interaction: discord.Interaction,
                               reason: str = "No reason provided"):
@@ -567,30 +657,6 @@ class ModerationCog(commands.Cog):
 
         await interaction.followup.send("🔒 Locking down server...", ephemeral=True)
 
-        for channel in guild.text_channels:
-            try:
-                # Deny send messages for @everyone
-                overwrite = channel.overwrites_for(guild.default_role)
-                overwrite.send_messages = False
-                await channel.set_permissions(
-                    guild.default_role,
-                    overwrite=overwrite,
-                    reason=f"Server lockdown by {actor}: {reason}"
-                )
-                # Ensure staff can still speak
-                if staff_role:
-                    staff_overwrite = channel.overwrites_for(staff_role)
-                    staff_overwrite.send_messages = True
-                    await channel.set_permissions(
-                        staff_role,
-                        overwrite=staff_overwrite,
-                        reason="Lockdown — staff override"
-                    )
-                locked += 1
-            except Exception:
-                failed += 1
-
-        # ── Announce lockdown in every channel ────────────────────────────────
         lockdown_embed = discord.Embed(
             title="🔒 Server Lockdown",
             description=(
@@ -604,19 +670,54 @@ class ModerationCog(commands.Cog):
         )
         lockdown_embed.set_footer(text=f"Lockdown initiated by {actor.display_name}")
 
-        for channel in guild.text_channels:
+        # ── Lock text channels ────────────────────────────────────────────────
+        sent_messages = []
+        for channel_id in LOCKDOWN_TEXT_CHANNELS:
+            channel = guild.get_channel(channel_id)
+            if not channel:
+                continue
             try:
-                await channel.send(embed=lockdown_embed)
+                overwrite = channel.overwrites_for(guild.default_role)
+                overwrite.send_messages = False
+                await channel.set_permissions(guild.default_role, overwrite=overwrite,
+                                               reason=f"Server lockdown by {actor}: {reason}")
+                if staff_role:
+                    staff_ow = channel.overwrites_for(staff_role)
+                    staff_ow.send_messages = True
+                    await channel.set_permissions(staff_role, overwrite=staff_ow,
+                                                   reason="Lockdown — staff override")
+                msg = await channel.send(embed=lockdown_embed)
+                sent_messages.append(msg)
+                locked += 1
             except Exception:
-                pass
+                failed += 1
+
+        # ── Lock voice channels ───────────────────────────────────────────────
+        for channel_id in LOCKDOWN_VOICE_CHANNELS:
+            channel = guild.get_channel(channel_id)
+            if not channel:
+                continue
+            try:
+                overwrite = channel.overwrites_for(guild.default_role)
+                overwrite.connect = False
+                await channel.set_permissions(guild.default_role, overwrite=overwrite,
+                                               reason=f"Server lockdown by {actor}: {reason}")
+                if staff_role:
+                    staff_ow = channel.overwrites_for(staff_role)
+                    staff_ow.connect = True
+                    await channel.set_permissions(staff_role, overwrite=staff_ow,
+                                                   reason="Lockdown — staff override")
+                locked += 1
+            except Exception:
+                failed += 1
 
         # ── Log ───────────────────────────────────────────────────────────────
         log_embed = discord.Embed(title="🔒 Server Lockdown Initiated", color=discord.Color.red(), timestamp=datetime.datetime.utcnow())
-        log_embed.add_field(name="Initiated By",    value=actor.mention,       inline=True)
-        log_embed.add_field(name="Reason",          value=reason,              inline=True)
+        log_embed.add_field(name="Initiated By",    value=actor.mention,          inline=True)
+        log_embed.add_field(name="Reason",          value=reason,                 inline=True)
         log_embed.add_field(name="Channels Locked", value=f"{locked} channel(s)", inline=True)
         if failed:
-            log_embed.add_field(name="Failed",      value=f"{failed} channel(s)", inline=True)
+            log_embed.add_field(name="Failed", value=f"{failed} channel(s)", inline=True)
 
         log_channel = guild.get_channel(LOCKDOWN_LOG_CHANNEL)
         if log_channel:
@@ -643,20 +744,6 @@ class ModerationCog(commands.Cog):
 
         await interaction.followup.send("🔓 Unlocking server...", ephemeral=True)
 
-        for channel in guild.text_channels:
-            try:
-                overwrite = channel.overwrites_for(guild.default_role)
-                overwrite.send_messages = None  # Reset to default
-                await channel.set_permissions(
-                    guild.default_role,
-                    overwrite=overwrite,
-                    reason=f"Lockdown lifted by {actor}: {reason}"
-                )
-                unlocked += 1
-            except Exception:
-                failed += 1
-
-        # ── Announce unlock ───────────────────────────────────────────────────
         unlock_embed = discord.Embed(
             title="🔓 Server Unlocked",
             description=(
@@ -669,19 +756,44 @@ class ModerationCog(commands.Cog):
         )
         unlock_embed.set_footer(text=f"Unlocked by {actor.display_name}")
 
-        for channel in guild.text_channels:
+        # ── Unlock text channels ──────────────────────────────────────────────
+        for channel_id in LOCKDOWN_TEXT_CHANNELS:
+            channel = guild.get_channel(channel_id)
+            if not channel:
+                continue
             try:
-                await channel.send(embed=unlock_embed)
+                overwrite = channel.overwrites_for(guild.default_role)
+                overwrite.send_messages = None
+                await channel.set_permissions(guild.default_role, overwrite=overwrite,
+                                               reason=f"Lockdown lifted by {actor}: {reason}")
+                msg = await channel.send(embed=unlock_embed)
+                # ── Delete after 15 seconds ───────────────────────────────────
+                await msg.delete(delay=15)
+                unlocked += 1
             except Exception:
-                pass
+                failed += 1
+
+        # ── Unlock voice channels ─────────────────────────────────────────────
+        for channel_id in LOCKDOWN_VOICE_CHANNELS:
+            channel = guild.get_channel(channel_id)
+            if not channel:
+                continue
+            try:
+                overwrite = channel.overwrites_for(guild.default_role)
+                overwrite.connect = None
+                await channel.set_permissions(guild.default_role, overwrite=overwrite,
+                                               reason=f"Lockdown lifted by {actor}: {reason}")
+                unlocked += 1
+            except Exception:
+                failed += 1
 
         # ── Log ───────────────────────────────────────────────────────────────
         log_embed = discord.Embed(title="🔓 Server Lockdown Lifted", color=discord.Color.green(), timestamp=datetime.datetime.utcnow())
-        log_embed.add_field(name="Lifted By",         value=actor.mention,          inline=True)
-        log_embed.add_field(name="Reason",            value=reason,                 inline=True)
+        log_embed.add_field(name="Lifted By",         value=actor.mention,            inline=True)
+        log_embed.add_field(name="Reason",            value=reason,                   inline=True)
         log_embed.add_field(name="Channels Unlocked", value=f"{unlocked} channel(s)", inline=True)
         if failed:
-            log_embed.add_field(name="Failed",        value=f"{failed} channel(s)", inline=True)
+            log_embed.add_field(name="Failed", value=f"{failed} channel(s)", inline=True)
 
         log_channel = guild.get_channel(LOCKDOWN_LOG_CHANNEL)
         if log_channel:
