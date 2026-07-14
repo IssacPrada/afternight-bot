@@ -1,5 +1,5 @@
 """
-cogs/moderation.py — /warn, /viewwarns, /clearwarns, /ban, /kick commands
+cogs/moderation.py — /warn, /viewwarns, /clearwarns, /ban, /kick, /mute, /unmute commands
 """
 import discord
 from discord import app_commands
@@ -12,10 +12,11 @@ from discord.ext import tasks
 WARN_LOG_CHANNEL = 1388022887725924372
 BAN_LOG_CHANNEL  = 1388022794729558077
 KICK_LOG_CHANNEL = 1526138824173031545
+MUTE_LOG_CHANNEL = 1388022999986212875
 APPEAL_SERVER    = "https://discord.gg/dQAbatSEcw"
 
-ADMIN_RANK_INDEX = 4  # Administrator+
-MOD_RANK_INDEX   = 1  # Moderator+
+ADMIN_RANK_INDEX = 4
+MOD_RANK_INDEX   = 1
 
 
 def is_admin_plus(member: discord.Member) -> bool:
@@ -356,7 +357,6 @@ class ModerationCog(commands.Cog):
         is_temp      = temporary == "yes"
         ban_type_str = f"Temporary — Unban: **{unban_date}**" if is_temp else "Permanent"
 
-        # ── DM before ban ─────────────────────────────────────────────────────
         try:
             dm_embed = discord.Embed(
                 title="🔨 You Have Been Banned",
@@ -381,7 +381,6 @@ class ModerationCog(commands.Cog):
         except discord.Forbidden:
             pass
 
-        # ── Execute ban ───────────────────────────────────────────────────────
         await guild.ban(
             user,
             reason=f"{reason} | Banned by {actor}",
@@ -393,7 +392,6 @@ class ModerationCog(commands.Cog):
                 str(user.id), str(guild.id), unban_date, reason, str(actor.id)
             )
 
-        # ── Log ───────────────────────────────────────────────────────────────
         log_embed = discord.Embed(
             title="🔨 Member Banned",
             color=discord.Color.red(),
@@ -469,7 +467,6 @@ class ModerationCog(commands.Cog):
 
         guild = interaction.guild
 
-        # ── DM before kick ────────────────────────────────────────────────────
         try:
             dm_embed = discord.Embed(
                 title="👢 You Have Been Kicked",
@@ -488,10 +485,8 @@ class ModerationCog(commands.Cog):
         except discord.Forbidden:
             pass
 
-        # ── Execute kick ──────────────────────────────────────────────────────
         await guild.kick(user, reason=f"{reason} | Kicked by {actor}")
 
-        # ── Log ───────────────────────────────────────────────────────────────
         log_embed = discord.Embed(
             title="👢 Member Kicked",
             color=discord.Color.orange(),
@@ -519,6 +514,210 @@ class ModerationCog(commands.Cog):
         confirm_embed = discord.Embed(
             title="✅ Member Kicked",
             color=discord.Color.orange(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        confirm_embed.add_field(name="Member", value=user.mention, inline=True)
+        confirm_embed.add_field(name="Reason", value=reason,       inline=True)
+        await interaction.followup.send(embed=confirm_embed, ephemeral=True)
+
+    # ── /mute ─────────────────────────────────────────────────────────────────
+
+    @app_commands.command(
+        name="mute",
+        description="Timeout (mute) a member."
+    )
+    @app_commands.describe(
+        user="The member to mute",
+        reason="Reason for the mute",
+        duration="Duration (e.g. 10m, 1h, 1d, 7d — max 28 days)",
+        evidence="Evidence link or description (optional)"
+    )
+    async def mute(self, interaction: discord.Interaction,
+                   user: discord.Member,
+                   reason: str,
+                   duration: str,
+                   evidence: str = "None provided"):
+        await interaction.response.defer(ephemeral=True)
+
+        actor = interaction.user
+
+        if not is_staff(actor):
+            return await interaction.followup.send(
+                "❌ Only staff members may use `/mute`.", ephemeral=True
+            )
+        if user == actor:
+            return await interaction.followup.send(
+                "❌ You cannot mute yourself.", ephemeral=True
+            )
+        if user.top_role >= interaction.guild.me.top_role:
+            return await interaction.followup.send(
+                "❌ I cannot mute this user — their role is higher than mine.",
+                ephemeral=True
+            )
+
+        # ── Parse duration ────────────────────────────────────────────────────
+        duration = duration.lower().strip()
+        try:
+            if duration.endswith("m"):
+                delta = datetime.timedelta(minutes=int(duration[:-1]))
+            elif duration.endswith("h"):
+                delta = datetime.timedelta(hours=int(duration[:-1]))
+            elif duration.endswith("d"):
+                delta = datetime.timedelta(days=int(duration[:-1]))
+            else:
+                return await interaction.followup.send(
+                    "❌ Invalid duration format. Use `10m`, `1h`, `1d`, `7d` etc.",
+                    ephemeral=True
+                )
+        except ValueError:
+            return await interaction.followup.send(
+                "❌ Invalid duration. Examples: `10m`, `2h`, `3d`",
+                ephemeral=True
+            )
+
+        if delta > datetime.timedelta(days=28):
+            return await interaction.followup.send(
+                "❌ Maximum mute duration is 28 days.",
+                ephemeral=True
+            )
+
+        until     = datetime.datetime.utcnow() + delta
+        until_str = until.strftime("%B %d, %Y at %I:%M %p UTC")
+
+        # ── DM before mute ────────────────────────────────────────────────────
+        try:
+            dm_embed = discord.Embed(
+                title="🔇 You Have Been Muted",
+                color=discord.Color.dark_grey(),
+                timestamp=datetime.datetime.utcnow()
+            )
+            dm_embed.description = (
+                f"You have been **muted** in **Afternight Legacies**.\n\n"
+                f"**Reason:** {reason}\n"
+                f"**Duration:** {duration}\n"
+                f"**Unmuted:** {until_str}\n\n"
+                f"If you believe this was a mistake, you may appeal here:\n"
+                f"{APPEAL_SERVER}"
+            )
+            dm_embed.set_footer(text="Afternight Moderation")
+            await user.send(embed=dm_embed)
+        except discord.Forbidden:
+            pass
+
+        # ── Apply timeout ─────────────────────────────────────────────────────
+        await user.timeout(until, reason=f"{reason} | Muted by {actor}")
+
+        # ── Log ───────────────────────────────────────────────────────────────
+        log_embed = discord.Embed(
+            title="🔇 Member Muted",
+            color=discord.Color.dark_grey(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        log_embed.set_thumbnail(url=user.display_avatar.url)
+        log_embed.add_field(
+            name="Discord ID",
+            value=f"{user.mention} (`{user.id}`)",
+            inline=False
+        )
+        log_embed.add_field(name="Reason",   value=reason,     inline=False)
+        log_embed.add_field(name="Duration", value=duration,   inline=True)
+        log_embed.add_field(name="Unmuted",  value=until_str,  inline=True)
+        log_embed.add_field(name="Evidence", value=evidence,   inline=False)
+        log_embed.add_field(
+            name="Muted By",
+            value=f"{actor.mention} (`{actor.id}`)",
+            inline=False
+        )
+        log_embed.set_footer(text=f"User ID: {user.id}")
+
+        log_channel = interaction.guild.get_channel(MUTE_LOG_CHANNEL)
+        if log_channel:
+            await log_channel.send(embed=log_embed)
+
+        confirm_embed = discord.Embed(
+            title="✅ Member Muted",
+            color=discord.Color.dark_grey(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        confirm_embed.add_field(name="Member",   value=user.mention, inline=True)
+        confirm_embed.add_field(name="Duration", value=duration,     inline=True)
+        confirm_embed.add_field(name="Reason",   value=reason,       inline=True)
+        await interaction.followup.send(embed=confirm_embed, ephemeral=True)
+
+    # ── /unmute ───────────────────────────────────────────────────────────────
+
+    @app_commands.command(
+        name="unmute",
+        description="Remove a timeout (unmute) from a member."
+    )
+    @app_commands.describe(
+        user="The member to unmute",
+        reason="Reason for removing the mute (optional)"
+    )
+    async def unmute(self, interaction: discord.Interaction,
+                     user: discord.Member,
+                     reason: str = "Mute lifted by staff"):
+        await interaction.response.defer(ephemeral=True)
+
+        actor = interaction.user
+
+        if not is_staff(actor):
+            return await interaction.followup.send(
+                "❌ Only staff members may use `/unmute`.", ephemeral=True
+            )
+
+        if not user.is_timed_out():
+            return await interaction.followup.send(
+                f"❌ {user.mention} is not currently muted.", ephemeral=True
+            )
+
+        # ── Remove timeout ────────────────────────────────────────────────────
+        await user.timeout(None, reason=f"{reason} | Unmuted by {actor}")
+
+        # ── DM the user ───────────────────────────────────────────────────────
+        try:
+            dm_embed = discord.Embed(
+                title="🔊 You Have Been Unmuted",
+                color=discord.Color.green(),
+                timestamp=datetime.datetime.utcnow()
+            )
+            dm_embed.description = (
+                f"Your mute in **Afternight Legacies** has been lifted.\n\n"
+                f"**Reason:** {reason}\n\n"
+                f"Please ensure you follow the server rules going forward."
+            )
+            dm_embed.set_footer(text="Afternight Moderation")
+            await user.send(embed=dm_embed)
+        except discord.Forbidden:
+            pass
+
+        # ── Log ───────────────────────────────────────────────────────────────
+        log_embed = discord.Embed(
+            title="🔊 Member Unmuted",
+            color=discord.Color.green(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        log_embed.set_thumbnail(url=user.display_avatar.url)
+        log_embed.add_field(
+            name="Discord ID",
+            value=f"{user.mention} (`{user.id}`)",
+            inline=False
+        )
+        log_embed.add_field(name="Reason",     value=reason,        inline=False)
+        log_embed.add_field(
+            name="Unmuted By",
+            value=f"{actor.mention} (`{actor.id}`)",
+            inline=False
+        )
+        log_embed.set_footer(text=f"User ID: {user.id}")
+
+        log_channel = interaction.guild.get_channel(MUTE_LOG_CHANNEL)
+        if log_channel:
+            await log_channel.send(embed=log_embed)
+
+        confirm_embed = discord.Embed(
+            title="✅ Member Unmuted",
+            color=discord.Color.green(),
             timestamp=datetime.datetime.utcnow()
         )
         confirm_embed.add_field(name="Member", value=user.mention, inline=True)
