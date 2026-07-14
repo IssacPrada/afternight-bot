@@ -25,11 +25,11 @@ class Database:
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS strikes (
                     id          SERIAL PRIMARY KEY,
-                    user_id     TEXT    NOT NULL,
-                    guild_id    TEXT    NOT NULL,
+                    user_id     TEXT      NOT NULL,
+                    guild_id    TEXT      NOT NULL,
                     faction     TEXT,
-                    reason      TEXT    NOT NULL,
-                    struck_by   TEXT    NOT NULL,
+                    reason      TEXT      NOT NULL,
+                    struck_by   TEXT      NOT NULL,
                     created_at  TIMESTAMP NOT NULL DEFAULT NOW()
                 );
 
@@ -39,41 +39,41 @@ class Database:
                     faction     TEXT,
                     joined_at   TIMESTAMP NOT NULL DEFAULT NOW(),
                     left_at     TIMESTAMP,
-                    duration_s  INTEGER DEFAULT 0
+                    duration_s  INTEGER   DEFAULT 0
                 );
 
                 CREATE TABLE IF NOT EXISTS staff_log (
                     id          SERIAL PRIMARY KEY,
-                    action      TEXT    NOT NULL,
-                    target_id   TEXT    NOT NULL,
-                    actor_id    TEXT    NOT NULL,
-                    guild_id    TEXT    NOT NULL,
+                    action      TEXT      NOT NULL,
+                    target_id   TEXT      NOT NULL,
+                    actor_id    TEXT      NOT NULL,
+                    guild_id    TEXT      NOT NULL,
                     note        TEXT,
                     created_at  TIMESTAMP NOT NULL DEFAULT NOW()
                 );
 
                 CREATE TABLE IF NOT EXISTS blacklist (
-                    id                    SERIAL PRIMARY KEY,
-                    user_id               TEXT    NOT NULL,
-                    guild_id              TEXT    NOT NULL,
-                    faction               TEXT    NOT NULL,
-                    reason                TEXT    NOT NULL,
-                    blacklisted_by        TEXT    NOT NULL,
-                    roblox_username       TEXT,
+                    id                     SERIAL PRIMARY KEY,
+                    user_id                TEXT      NOT NULL,
+                    guild_id               TEXT      NOT NULL,
+                    faction                TEXT      NOT NULL,
+                    reason                 TEXT      NOT NULL,
+                    blacklisted_by         TEXT      NOT NULL,
+                    roblox_username        TEXT,
                     blacklist_embed_msg_id TEXT,
-                    created_at            TIMESTAMP NOT NULL DEFAULT NOW()
+                    created_at             TIMESTAMP NOT NULL DEFAULT NOW()
                 );
-                
+
                 CREATE TABLE IF NOT EXISTS warns (
-                    id         SERIAL PRIMARY KEY,
-                    user_id    TEXT      NOT NULL,
-                    guild_id   TEXT      NOT NULL,
-                    reason     TEXT      NOT NULL,
-                    evidence   TEXT,
-                    warned_by  TEXT      NOT NULL,
-                    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+                    id          SERIAL PRIMARY KEY,
+                    user_id     TEXT      NOT NULL,
+                    guild_id    TEXT      NOT NULL,
+                    reason      TEXT      NOT NULL,
+                    evidence    TEXT,
+                    warned_by   TEXT      NOT NULL,
+                    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
                 );
-                
+
                 CREATE TABLE IF NOT EXISTS temp_bans (
                     id          SERIAL PRIMARY KEY,
                     user_id     TEXT      NOT NULL,
@@ -158,30 +158,6 @@ class Database:
                 action, target_id, actor_id, guild_id, note
             )
 
-    # ── Temp Bans ─────────────────────────────────────────────────────────────
-
-async def add_temp_ban(self, user_id: str, guild_id: str,
-                        unban_date: str, reason: str, banned_by: str):
-    async with self.pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO temp_bans (user_id, guild_id, unban_date, reason, banned_by) "
-            "VALUES ($1, $2, $3, $4, $5)",
-            user_id, guild_id, unban_date, reason, banned_by
-        )
-
-async def get_expired_temp_bans(self) -> list:
-    async with self.pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT * FROM temp_bans WHERE expired=FALSE"
-        )
-        return [dict(r) for r in rows]
-
-async def mark_temp_ban_expired(self, ban_id: int):
-    async with self.pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE temp_bans SET expired=TRUE WHERE id=$1", ban_id
-        )
-        
     # ── Blacklist ─────────────────────────────────────────────────────────────
 
     async def add_blacklist(self, user_id: str, guild_id: str, faction: str,
@@ -227,30 +203,54 @@ async def mark_temp_ban_expired(self, ban_id: int):
             )
             return [dict(r) for r in rows]
 
-# ── Warns ─────────────────────────────────────────────────────────────────
+    # ── Warns ─────────────────────────────────────────────────────────────────
 
-async def add_warn(self, user_id: str, guild_id: str, reason: str,
-                   evidence: str, warned_by: str):
-    async with self.pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO warns (user_id, guild_id, reason, evidence, warned_by) "
-            "VALUES ($1, $2, $3, $4, $5)",
-            user_id, guild_id, reason, evidence, warned_by
-        )
+    async def add_warn(self, user_id: str, guild_id: str, reason: str,
+                       evidence: str, warned_by: str):
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO warns (user_id, guild_id, reason, evidence, warned_by) "
+                "VALUES ($1, $2, $3, $4, $5)",
+                user_id, guild_id, reason, evidence, warned_by
+            )
 
-async def get_warns(self, user_id: str, guild_id: str) -> list:
-    async with self.pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT reason, evidence, warned_by, created_at FROM warns "
-            "WHERE user_id=$1 AND guild_id=$2 ORDER BY created_at ASC",
-            user_id, guild_id
-        )
-        return [dict(r) for r in rows]
+    async def get_warns(self, user_id: str, guild_id: str) -> List[Dict]:
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT reason, evidence, warned_by, created_at FROM warns "
+                "WHERE user_id=$1 AND guild_id=$2 ORDER BY created_at ASC",
+                user_id, guild_id
+            )
+            return [dict(r) for r in rows]
 
-async def clear_warns(self, user_id: str, guild_id: str) -> int:
-    async with self.pool.acquire() as conn:
-        result = await conn.execute(
-            "DELETE FROM warns WHERE user_id=$1 AND guild_id=$2",
-            user_id, guild_id
-        )
-        return int(result.split()[-1])
+    async def clear_warns(self, user_id: str, guild_id: str) -> int:
+        async with self.pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM warns WHERE user_id=$1 AND guild_id=$2",
+                user_id, guild_id
+            )
+            return int(result.split()[-1])
+
+    # ── Temp Bans ─────────────────────────────────────────────────────────────
+
+    async def add_temp_ban(self, user_id: str, guild_id: str,
+                            unban_date: str, reason: str, banned_by: str):
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO temp_bans (user_id, guild_id, unban_date, reason, banned_by) "
+                "VALUES ($1, $2, $3, $4, $5)",
+                user_id, guild_id, unban_date, reason, banned_by
+            )
+
+    async def get_expired_temp_bans(self) -> List[Dict]:
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM temp_bans WHERE expired=FALSE"
+            )
+            return [dict(r) for r in rows]
+
+    async def mark_temp_ban_expired(self, ban_id: int):
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE temp_bans SET expired=TRUE WHERE id=$1", ban_id
+            )
