@@ -32,36 +32,37 @@ intents.messages        = True
 class AfternightBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents)
-        self.db            = Database()
+        self.db             = Database()
         self.log_channel_id = LOG_CHANNEL_ID
 
     async def setup_hook(self):
         await self.db.init()
 
-        # Load all cogs
+        # ── Load all cogs ─────────────────────────────────────────────────────
         for cog in [
-    "cogs.staff",
-    "cogs.strikes",
-    "cogs.activity",
-    "cogs.faction",
-    "cogs.blacklist",
-    "cogs.shout",
-    "cogs.suggestions",
-    "cogs.testing",
-    "cogs.inactivity",
-    "cogs.resign",
-    "cogs.backup",
-    "cogs.massrank",
-    "cogs.moderation",
-]:
+            "cogs.staff",
+            "cogs.strikes",
+            "cogs.activity",
+            "cogs.faction",
+            "cogs.blacklist",
+            "cogs.shout",
+            "cogs.suggestions",
+            "cogs.testing",
+            "cogs.inactivity",
+            "cogs.resign",
+            "cogs.backup",
+            "cogs.massrank",
+            "cogs.moderation",
+        ]:
             await self.load_extension(cog)
             logger.info(f"Loaded cog: {cog}")
 
-        # Sync globally
-        synced = await self.tree.sync()
-        logger.info(f"Synced {len(synced)} global slash command(s)")
+        # ── Clear global commands to remove duplicates ────────────────────────
+        self.tree.clear_commands(guild=None)
+        await self.tree.sync()
+        logger.info("Cleared global slash commands")
 
-        # Sync to your guild instantly
+        # ── Sync only to your guild for instant updates ───────────────────────
         guild_obj = discord.Object(id=GUILD_ID)
         self.tree.copy_global_to(guild=guild_obj)
         await self.tree.sync(guild=guild_obj)
