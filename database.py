@@ -74,6 +74,16 @@ class Database:
                     created_at  TIMESTAMP NOT NULL DEFAULT NOW()
                 );
 
+                CREATE TABLE IF NOT EXISTS staff_strikes (
+                    id          SERIAL PRIMARY KEY,
+                    user_id     TEXT      NOT NULL,
+                    guild_id    TEXT      NOT NULL,
+                    reason      TEXT      NOT NULL,
+                    evidence    TEXT,
+                    issued_by   TEXT      NOT NULL,
+                    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+                );
+                
                 CREATE TABLE IF NOT EXISTS temp_bans (
                     id          SERIAL PRIMARY KEY,
                     user_id     TEXT      NOT NULL,
@@ -230,6 +240,35 @@ class Database:
                 user_id, guild_id
             )
             return int(result.split()[-1])
+
+
+    # ── Staff Strikes ─────────────────────────────────────────────────────────────
+
+async def add_staff_strike(self, user_id: str, guild_id: str, reason: str,
+                            evidence: str, issued_by: str):
+    async with self.pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO staff_strikes (user_id, guild_id, reason, evidence, issued_by) "
+            "VALUES ($1, $2, $3, $4, $5)",
+            user_id, guild_id, reason, evidence, issued_by
+        )
+
+async def get_staff_strikes(self, user_id: str, guild_id: str) -> list:
+    async with self.pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT reason, evidence, issued_by, created_at FROM staff_strikes "
+            "WHERE user_id=$1 AND guild_id=$2 ORDER BY created_at ASC",
+            user_id, guild_id
+        )
+        return [dict(r) for r in rows]
+
+async def clear_staff_strikes(self, user_id: str, guild_id: str) -> int:
+    async with self.pool.acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM staff_strikes WHERE user_id=$1 AND guild_id=$2",
+            user_id, guild_id
+        )
+        return int(result.split()[-1])
 
     # ── Temp Bans ─────────────────────────────────────────────────────────────
 
