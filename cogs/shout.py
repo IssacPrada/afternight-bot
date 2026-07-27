@@ -36,23 +36,53 @@ class ShoutCog(commands.Cog):
                 "❌ Only Overseer of Staff, Community Manager, or Creators may use `/shout`.",
                 ephemeral=True
             )
+        # ── Fetch the original message ────────────────────────────────────────────
+try:
+    original = await source_channel.fetch_message(int(message_id))
+except discord.NotFound:
+    return await interaction.followup.send(
+        f"❌ Could not find message `{message_id}` in {source_channel.mention}.\n"
+        "Make sure you copied the right message ID and selected the correct channel.",
+        ephemeral=True
+    )
+except ValueError:
+    return await interaction.followup.send(
+        "❌ Invalid message ID. Right click a message → Copy Message ID.",
+        ephemeral=True
+    )
 
-        # ── Fetch the original message ────────────────────────────────────────
-        try:
-            original = await source_channel.fetch_message(int(message_id))
-        except discord.NotFound:
-            return await interaction.followup.send(
-                f"❌ Could not find message `{message_id}` in {source_channel.mention}.\n"
-                "Make sure you copied the right message ID and selected the correct channel.",
-                ephemeral=True
-            )
-        except ValueError:
-            return await interaction.followup.send(
-                "❌ Invalid message ID. Right click a message → Copy Message ID.",
-                ephemeral=True
-            )
+ping_str = ping.mention if ping else None
 
-        ping_str = ping.mention if ping else None
+# ── Build content string ──────────────────────────────────────────────────
+content_to_send = original.content if original.content else None
+if ping_str:
+    content_to_send = f"{ping_str}\n{content_to_send}" if content_to_send else ping_str
+
+# ── Send based on what the message contains ───────────────────────────────
+if original.content and original.embeds:
+    # Both text and embeds
+    await destination.send(
+        content=content_to_send,
+        embeds=original.embeds
+    )
+elif original.embeds:
+    # Embeds only
+    await destination.send(
+        content=ping_str,
+        embeds=original.embeds
+    )
+elif original.content:
+    # Text only
+    await destination.send(content=content_to_send)
+elif original.attachments:
+    # Attachments only
+    files = [await att.to_file() for att in original.attachments]
+    await destination.send(content=ping_str, files=files)
+else:
+    return await interaction.followup.send(
+        "❌ That message has no content, embeds or attachments to copy.",
+        ephemeral=True
+    )
 
         # ── Copy embeds if the original has them ──────────────────────────────
         if original.embeds:
