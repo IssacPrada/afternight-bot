@@ -16,12 +16,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("AfternightBot")
 
-# ─── Config ───────────────────────────────────────────────────────────────────
 TOKEN          = os.getenv("DISCORD_TOKEN", "YOUR_BOT_TOKEN_HERE")
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))
 GUILD_ID       = 1387648629065650247
 
-# ─── Bot Setup ────────────────────────────────────────────────────────────────
+
 intents = discord.Intents.default()
 intents.members         = True
 intents.guilds          = True
@@ -31,38 +30,44 @@ intents.messages        = True
 
 class AfternightBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix="!", intents=intents)
-        self.db            = Database()
+        super().__init__(
+            command_prefix="!",
+            intents=intents,
+            help_command=None  # Disable default help so ours works
+        )
+        self.db             = Database()
         self.log_channel_id = LOG_CHANNEL_ID
 
     async def setup_hook(self):
         await self.db.init()
 
-        # Load all cogs
         for cog in [
-    "cogs.staff",
-    "cogs.strikes",
-    "cogs.activity",
-    "cogs.faction",
-    "cogs.blacklist",
-    "cogs.shout",
-    "cogs.suggestions",
-    "cogs.testing",
-    "cogs.inactivity",
-    "cogs.resign",
-    "cogs.backup",
-    "cogs.massrank",
-    "cogs.moderation",
- ]:
-
+            "cogs.staff",
+            "cogs.strikes",
+            "cogs.activity",
+            "cogs.faction",
+            "cogs.blacklist",
+            "cogs.shout",
+            "cogs.suggestions",
+            "cogs.testing",
+            "cogs.inactivity",
+            "cogs.resign",
+            "cogs.backup",
+            "cogs.massrank",
+            "cogs.moderation",
+            "cogs.automod",
+            "cogs.purge",
+            "cogs.help",
+        ]:
             await self.load_extension(cog)
             logger.info(f"Loaded cog: {cog}")
 
-        # Sync globally
-        synced = await self.tree.sync()
-        logger.info(f"Synced {len(synced)} global slash command(s)")
+        # Clear global commands to remove duplicates
+        self.tree.clear_commands(guild=None)
+        await self.tree.sync()
+        logger.info("Cleared global slash commands")
 
-        # Sync to your guild instantly
+        # Sync to guild for instant updates
         guild_obj = discord.Object(id=GUILD_ID)
         self.tree.copy_global_to(guild=guild_obj)
         await self.tree.sync(guild=guild_obj)
@@ -78,7 +83,6 @@ class AfternightBot(commands.Bot):
         )
 
     async def log_action(self, embed: discord.Embed):
-        """Send an embed to the log channel."""
         if not self.log_channel_id:
             return
         channel = self.get_channel(self.log_channel_id)
@@ -87,6 +91,9 @@ class AfternightBot(commands.Bot):
 
 
 bot = AfternightBot()
+
+if __name__ == "__main__":
+    asyncio.run(bot.start(TOKEN))
 
 if __name__ == "__main__":
     asyncio.run(bot.start(TOKEN))
