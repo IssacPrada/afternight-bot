@@ -20,7 +20,6 @@ TOKEN          = os.getenv("DISCORD_TOKEN", "YOUR_BOT_TOKEN_HERE")
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))
 GUILD_ID       = 1387648629065650247
 
-
 intents = discord.Intents.default()
 intents.members         = True
 intents.guilds          = True
@@ -30,11 +29,7 @@ intents.messages        = True
 
 class AfternightBot(commands.Bot):
     def __init__(self):
-        super().__init__(
-            command_prefix="!",
-            intents=intents,
-            help_command=None  # Disable default help so ours works
-        )
+        super().__init__(command_prefix="!", intents=intents)
         self.db             = Database()
         self.log_channel_id = LOG_CHANNEL_ID
 
@@ -62,12 +57,10 @@ class AfternightBot(commands.Bot):
             await self.load_extension(cog)
             logger.info(f"Loaded cog: {cog}")
 
-        # Clear global commands to remove duplicates
         self.tree.clear_commands(guild=None)
         await self.tree.sync()
         logger.info("Cleared global slash commands")
 
-        # Sync to guild for instant updates
         guild_obj = discord.Object(id=GUILD_ID)
         self.tree.copy_global_to(guild=guild_obj)
         await self.tree.sync(guild=guild_obj)
@@ -91,9 +84,6 @@ class AfternightBot(commands.Bot):
 
 
 bot = AfternightBot()
-
-if __name__ == "__main__":
-    asyncio.run(bot.start(TOKEN))
 
 if __name__ == "__main__":
     asyncio.run(bot.start(TOKEN))
