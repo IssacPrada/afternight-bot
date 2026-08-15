@@ -1,5 +1,5 @@
 """
-cogs/moderation.py — Full moderation suite with slash + prefix commands
+cogs/moderation.py — Full moderation suite (slash commands only)
 """
 import discord
 from discord import app_commands
@@ -26,7 +26,7 @@ STAFF_STRIKE_LOG_CHANNEL = 1527188854765916221
 APPEAL_SERVER = "https://discord.gg/dQAbatSEcw"
 
 LOCKDOWN_TEXT_CHANNELS = [
-    1533176901273911589,
+    1520278354425675826,
     1458296382178852886,
     1458296167455785185,
     1458296246719484039,
@@ -177,7 +177,11 @@ class ModerationCog(commands.Cog):
                     await guild.unban(user, reason="Temporary ban expired")
                     await self.bot.db.mark_temp_ban_expired(ban["id"])
                     try:
-                        dm = discord.Embed(title="✅ You Have Been Unbanned", color=discord.Color.green(), timestamp=discord.utils.utcnow())
+                        dm = discord.Embed(
+                            title="✅ You Have Been Unbanned",
+                            color=discord.Color.green(),
+                            timestamp=discord.utils.utcnow()
+                        )
                         dm.description = (
                             f"Your temporary ban from **Afternight Legacies** has expired.\n\n"
                             f"You may rejoin the server. Please follow the rules.\n\n"
@@ -188,9 +192,13 @@ class ModerationCog(commands.Cog):
                         pass
                     log_channel = guild.get_channel(BAN_LOG_CHANNEL)
                     if log_channel:
-                        e = discord.Embed(title="✅ Temp Ban Expired", color=discord.Color.green(), timestamp=discord.utils.utcnow())
+                        e = discord.Embed(
+                            title="✅ Temp Ban Expired",
+                            color=discord.Color.green(),
+                            timestamp=discord.utils.utcnow()
+                        )
                         e.add_field(name="Discord ID", value=f"{user.mention} (`{user.id}`)", inline=False)
-                        e.add_field(name="Reason", value="Temporary ban duration expired.", inline=False)
+                        e.add_field(name="Reason",     value="Temporary ban duration expired.", inline=False)
                         await log_channel.send(embed=e)
                 except Exception:
                     pass
@@ -201,13 +209,36 @@ class ModerationCog(commands.Cog):
     async def before_check_unbans(self):
         await self.bot.wait_until_ready()
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # WARN
-    # ─────────────────────────────────────────────────────────────────────────
+    # ── /warn ─────────────────────────────────────────────────────────────────
 
-    async def _warn(self, guild: discord.Guild, actor: discord.Member,
-                    user: discord.Member, reason: str, evidence: str):
-        await self.bot.db.add_warn(str(user.id), str(guild.id), reason, evidence, str(actor.id))
+    @app_commands.command(name="warn", description="Warn a community member.")
+    @app_commands.describe(
+        user="The member to warn",
+        reason="Reason for the warning",
+        evidence="Evidence link(s) — separate multiple with commas",
+        attachment1="Evidence attachment (optional)",
+        attachment2="Second evidence attachment (optional)"
+    )
+    async def warn(self, interaction: discord.Interaction,
+                   user: discord.Member, reason: str,
+                   evidence: str = "None provided",
+                   attachment1: discord.Attachment = None,
+                   attachment2: discord.Attachment = None):
+        await interaction.response.defer()
+
+        actor = interaction.user
+        if not is_staff(actor):
+            return await interaction.followup.send("❌ Only staff members may warn.", ephemeral=True)
+        if user.bot:
+            return await interaction.followup.send("❌ You cannot warn a bot.", ephemeral=True)
+        if user == actor:
+            return await interaction.followup.send("❌ You cannot warn yourself.", ephemeral=True)
+
+        attachments   = [a for a in [attachment1, attachment2] if a]
+        evidence_full = format_evidence(evidence, attachments)
+
+        guild = interaction.guild
+        await self.bot.db.add_warn(str(user.id), str(guild.id), reason, evidence_full, str(actor.id))
         warns      = await self.bot.db.get_warns(str(user.id), str(guild.id))
         warn_count = len(warns)
 
@@ -215,7 +246,7 @@ class ModerationCog(commands.Cog):
         log_embed.set_thumbnail(url=user.display_avatar.url)
         log_embed.add_field(name="Discord ID",     value=f"{user.mention} (`{user.id}`)", inline=False)
         log_embed.add_field(name="Reason",         value=reason,                          inline=False)
-        log_embed.add_field(name="Evidence",       value=evidence,                        inline=False)
+        log_embed.add_field(name="Evidence",       value=evidence_full,                   inline=False)
         log_embed.add_field(name="Warned By",      value=f"{actor.mention} (`{actor.id}`)", inline=True)
         log_embed.add_field(name="Total Warnings", value=f"**{warn_count}** warning(s)",  inline=True)
         log_embed.set_footer(text=f"User ID: {user.id}")
@@ -231,6 +262,12 @@ class ModerationCog(commands.Cog):
         if log_channel:
             await log_channel.send(embed=log_embed)
 
+        confirm = discord.Embed(title="✅ Warning Issued", color=discord.Color.green(), timestamp=discord.utils.utcnow())
+        confirm.add_field(name="Member",         value=user.mention,    inline=True)
+        confirm.add_field(name="Reason",         value=reason,          inline=True)
+        confirm.add_field(name="Total Warnings", value=f"{warn_count}", inline=True)
+        await interaction.followup.send(embed=confirm)
+
         try:
             dm = discord.Embed(title="⚠️ You Have Been Warned", color=discord.Color.yellow(), timestamp=discord.utils.utcnow())
             dm.description = (
@@ -242,53 +279,29 @@ class ModerationCog(commands.Cog):
         except discord.Forbidden:
             pass
 
-        return warn_count
+    # ── /viewwarns ────────────────────────────────────────────────────────────
 
-    @app_commands.command(name="warn", description="Warn a community member.")
-    @app_commands.describe(user="The member to warn", reason="Reason", evidence="Evidence links (optional)", attachment1="Attachment (optional)", attachment2="Attachment (optional)")
-    async def warn_slash(self, interaction: discord.Interaction, user: discord.Member, reason: str, evidence: str = "None provided", attachment1: discord.Attachment = None, attachment2: discord.Attachment = None):
+    @app_commands.command(name="viewwarns", description="View warnings for a member.")
+    @app_commands.describe(user="The member to check")
+    async def viewwarns(self, interaction: discord.Interaction, user: discord.Member):
         await interaction.response.defer()
-        actor = interaction.user
-        if not is_staff(actor):
-            return await interaction.followup.send("❌ Only staff may warn members.", ephemeral=True)
-        if user.bot or user == actor:
-            return await interaction.followup.send("❌ Invalid target.", ephemeral=True)
-        attachments   = [a for a in [attachment1, attachment2] if a]
-        evidence_full = format_evidence(evidence, attachments)
-        count = await self._warn(interaction.guild, actor, user, reason, evidence_full)
-        confirm = discord.Embed(title="✅ Warning Issued", color=discord.Color.green(), timestamp=discord.utils.utcnow())
-        confirm.add_field(name="Member", value=user.mention, inline=True)
-        confirm.add_field(name="Reason", value=reason,       inline=True)
-        confirm.add_field(name="Total",  value=f"{count}",   inline=True)
-        await interaction.followup.send(embed=confirm)
 
-    @commands.command(name="warn")
-    async def warn_prefix(self, ctx: commands.Context, user: discord.Member, *, reason: str = "No reason provided"):
-        if not is_staff(ctx.author):
-            return await ctx.send("❌ Only staff may warn members.")
-        if user.bot or user == ctx.author:
-            return await ctx.send("❌ Invalid target.")
-        evidence = "None provided"
-        if ctx.message.attachments:
-            evidence = "\n".join(a.url for a in ctx.message.attachments)
-        count = await self._warn(ctx.guild, ctx.author, user, reason, evidence)
-        await ctx.send(f"✅ **{user.display_name}** has been warned. Total warnings: **{count}**")
+        if not is_staff(interaction.user):
+            return await interaction.followup.send("❌ Only staff may view warnings.", ephemeral=True)
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # VIEWWARNS
-    # ─────────────────────────────────────────────────────────────────────────
-
-    async def _viewwarns(self, guild: discord.Guild, user: discord.Member) -> discord.Embed:
+        guild = interaction.guild
         warns = await self.bot.db.get_warns(str(user.id), str(guild.id))
         count = len(warns)
+
         embed = discord.Embed(
             title=f"⚠️ Warnings — {user.display_name}",
             color=discord.Color.yellow() if count > 0 else discord.Color.green(),
             timestamp=discord.utils.utcnow()
         )
         embed.set_thumbnail(url=user.display_avatar.url)
-        embed.add_field(name="Total", value=f"**{count}**", inline=True)
-        embed.add_field(name="ID",    value=f"`{user.id}`", inline=True)
+        embed.add_field(name="Total Warnings", value=f"**{count}**", inline=True)
+        embed.add_field(name="Discord ID",     value=f"`{user.id}`", inline=True)
+
         if warns:
             for i, w in enumerate(warns, 1):
                 date       = str(w.get("created_at", ""))[:10]
@@ -301,39 +314,26 @@ class ModerationCog(commands.Cog):
                 )
         else:
             embed.add_field(name="No Warnings", value="This member has no warnings.", inline=False)
-        embed.set_footer(text=f"User ID: {user.id}")
-        return embed
 
-    @app_commands.command(name="viewwarns", description="View warnings for a member.")
-    @app_commands.describe(user="The member to check")
-    async def viewwarns_slash(self, interaction: discord.Interaction, user: discord.Member):
-        await interaction.response.defer()
-        if not is_staff(interaction.user):
-            return await interaction.followup.send("❌ Only staff may view warnings.", ephemeral=True)
-        embed = await self._viewwarns(interaction.guild, user)
+        embed.set_footer(text=f"User ID: {user.id}")
         await interaction.followup.send(embed=embed)
 
-    @commands.command(name="viewwarns", aliases=["warns", "warnings"])
-    async def viewwarns_prefix(self, ctx: commands.Context, user: discord.Member):
-        if not is_staff(ctx.author):
-            return await ctx.send("❌ Only staff may view warnings.")
-        embed = await self._viewwarns(ctx.guild, user)
-        await ctx.send(embed=embed)
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # CLEARWARNS
-    # ─────────────────────────────────────────────────────────────────────────
+    # ── /clearwarns ───────────────────────────────────────────────────────────
 
     @app_commands.command(name="clearwarns", description="Clear one or all warnings for a member.")
     @app_commands.describe(user="The member whose warnings to manage")
-    async def clearwarns_slash(self, interaction: discord.Interaction, user: discord.Member):
+    async def clearwarns(self, interaction: discord.Interaction, user: discord.Member):
         await interaction.response.defer(ephemeral=True)
+
         if not is_admin(interaction.user):
             return await interaction.followup.send("❌ Only Admins or above may clear warnings.", ephemeral=True)
+
         guild = interaction.guild
         warns = await self.bot.db.get_warns(str(user.id), str(guild.id))
+
         if not warns:
             return await interaction.followup.send(f"❌ {user.mention} has no warnings.", ephemeral=True)
+
         embed = discord.Embed(
             title=f"🗑️ Clear Warnings — {user.display_name}",
             description=f"{user.mention} has **{len(warns)}** warning(s). Select which to remove:",
@@ -343,21 +343,49 @@ class ModerationCog(commands.Cog):
         view = WarnSelectView(warns, user, self.bot)
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
-    @commands.command(name="clearwarns", aliases=["clearwarn"])
-    async def clearwarns_prefix(self, ctx: commands.Context, user: discord.Member):
-        if not is_admin(ctx.author):
-            return await ctx.send("❌ Only Admins or above may clear warnings.")
-        removed = await self.bot.db.clear_warns(str(user.id), str(ctx.guild.id))
-        await ctx.send(f"✅ Cleared **{removed}** warning(s) from {user.mention}.")
+    # ── /ban ──────────────────────────────────────────────────────────────────
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # BAN
-    # ─────────────────────────────────────────────────────────────────────────
+    @app_commands.command(name="ban", description="Ban a member from the server.")
+    @app_commands.describe(
+        user="The member to ban",
+        reason="Reason for the ban",
+        evidence="Evidence link(s)",
+        temporary="Is this a temporary ban?",
+        unban_date="If temporary, when they get unbanned (e.g. July 20 2026)",
+        delete_days="Number of days of messages to delete (0-7)",
+        attachment1="Evidence attachment (optional)",
+        attachment2="Second evidence attachment (optional)"
+    )
+    @app_commands.choices(temporary=[
+        app_commands.Choice(name="Yes — Temporary Ban", value="yes"),
+        app_commands.Choice(name="No — Permanent Ban",  value="no"),
+    ])
+    async def ban(self, interaction: discord.Interaction,
+                  user: discord.Member, reason: str, temporary: str,
+                  evidence: str = "None provided", unban_date: str = None,
+                  delete_days: int = 0,
+                  attachment1: discord.Attachment = None,
+                  attachment2: discord.Attachment = None):
+        await interaction.response.defer()
 
-    async def _ban(self, guild: discord.Guild, actor: discord.Member,
-                   user: discord.Member, reason: str, evidence: str,
-                   is_temp: bool, unban_date: str, delete_days: int):
-        ban_type_str = f"Temporary — Unban: **{unban_date}**" if is_temp else "Permanent"
+        actor = interaction.user
+        if not is_admin(actor):
+            return await interaction.followup.send("❌ Only Admins or above may ban.", ephemeral=True)
+        if user == actor:
+            return await interaction.followup.send("❌ You cannot ban yourself.", ephemeral=True)
+        if user.top_role >= interaction.guild.me.top_role:
+            return await interaction.followup.send("❌ I cannot ban this user.", ephemeral=True)
+        if temporary == "yes" and not unban_date:
+            return await interaction.followup.send("❌ Provide an unban date for a temp ban.", ephemeral=True)
+        if not 0 <= delete_days <= 7:
+            return await interaction.followup.send("❌ Delete days must be 0-7.", ephemeral=True)
+
+        attachments   = [a for a in [attachment1, attachment2] if a]
+        evidence_full = format_evidence(evidence, attachments)
+        guild         = interaction.guild
+        is_temp       = temporary == "yes"
+        ban_type_str  = f"Temporary — Unban: **{unban_date}**" if is_temp else "Permanent"
+
         try:
             dm = discord.Embed(title="🔨 You Have Been Banned", color=discord.Color.red(), timestamp=discord.utils.utcnow())
             dm.description = (
@@ -384,7 +412,7 @@ class ModerationCog(commands.Cog):
         log_embed.add_field(name="Discord ID",        value=f"{user.mention} (`{user.id}`)", inline=False)
         log_embed.add_field(name="Reason",            value=reason,                          inline=False)
         log_embed.add_field(name="Temporary Or Perm", value=ban_type_str,                    inline=False)
-        log_embed.add_field(name="Evidence",          value=evidence,                        inline=False)
+        log_embed.add_field(name="Evidence",          value=evidence_full,                   inline=False)
         log_embed.add_field(name="Banned By",         value=f"{actor.mention} (`{actor.id}`)", inline=True)
         log_embed.add_field(name="Messages Deleted",  value=f"{delete_days} day(s)",         inline=True)
         log_embed.set_footer(text=f"User ID: {user.id}")
@@ -393,55 +421,41 @@ class ModerationCog(commands.Cog):
         if log_channel:
             await log_channel.send(embed=log_embed)
 
-        return ban_type_str
-
-    @app_commands.command(name="ban", description="Ban a member from the server.")
-    @app_commands.describe(user="The member to ban", reason="Reason", evidence="Evidence links", temporary="Temp or perm?", unban_date="Unban date if temp", delete_days="Days of messages to delete (0-7)", attachment1="Attachment", attachment2="Attachment")
-    @app_commands.choices(temporary=[
-        app_commands.Choice(name="Yes — Temporary Ban", value="yes"),
-        app_commands.Choice(name="No — Permanent Ban",  value="no"),
-    ])
-    async def ban_slash(self, interaction: discord.Interaction, user: discord.Member, reason: str, temporary: str, evidence: str = "None provided", unban_date: str = None, delete_days: int = 0, attachment1: discord.Attachment = None, attachment2: discord.Attachment = None):
-        await interaction.response.defer()
-        actor = interaction.user
-        if not is_admin(actor):
-            return await interaction.followup.send("❌ Only Admins or above may ban.", ephemeral=True)
-        if user == actor:
-            return await interaction.followup.send("❌ You cannot ban yourself.", ephemeral=True)
-        if user.top_role >= interaction.guild.me.top_role:
-            return await interaction.followup.send("❌ I cannot ban this user.", ephemeral=True)
-        if temporary == "yes" and not unban_date:
-            return await interaction.followup.send("❌ Provide an unban date for a temp ban.", ephemeral=True)
-        if not 0 <= delete_days <= 7:
-            return await interaction.followup.send("❌ Delete days must be 0-7.", ephemeral=True)
-        attachments   = [a for a in [attachment1, attachment2] if a]
-        evidence_full = format_evidence(evidence, attachments)
-        is_temp       = temporary == "yes"
-        ban_type_str  = await self._ban(interaction.guild, actor, user, reason, evidence_full, is_temp, unban_date, delete_days)
         confirm = discord.Embed(title="✅ Member Banned", color=discord.Color.red(), timestamp=discord.utils.utcnow())
         confirm.add_field(name="Member", value=user.mention,  inline=True)
         confirm.add_field(name="Reason", value=reason,        inline=True)
         confirm.add_field(name="Type",   value=ban_type_str,  inline=True)
         await interaction.followup.send(embed=confirm)
 
-    @commands.command(name="ban")
-    async def ban_prefix(self, ctx: commands.Context, user: discord.Member, *, reason: str = "No reason provided"):
-        if not is_admin(ctx.author):
-            return await ctx.send("❌ Only Admins or above may ban.")
-        if user == ctx.author:
-            return await ctx.send("❌ You cannot ban yourself.")
-        if user.top_role >= ctx.guild.me.top_role:
-            return await ctx.send("❌ I cannot ban this user.")
-        evidence = "\n".join(a.url for a in ctx.message.attachments) if ctx.message.attachments else "None provided"
-        await self._ban(ctx.guild, ctx.author, user, reason, evidence, False, None, 0)
-        await ctx.send(f"✅ **{user.display_name}** has been permanently banned.")
+    # ── /kick ─────────────────────────────────────────────────────────────────
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # KICK
-    # ─────────────────────────────────────────────────────────────────────────
+    @app_commands.command(name="kick", description="Kick a member from the server.")
+    @app_commands.describe(
+        user="The member to kick",
+        reason="Reason for the kick",
+        evidence="Evidence link(s)",
+        attachment1="Evidence attachment (optional)",
+        attachment2="Second evidence attachment (optional)"
+    )
+    async def kick(self, interaction: discord.Interaction,
+                   user: discord.Member, reason: str,
+                   evidence: str = "None provided",
+                   attachment1: discord.Attachment = None,
+                   attachment2: discord.Attachment = None):
+        await interaction.response.defer()
 
-    async def _kick(self, guild: discord.Guild, actor: discord.Member,
-                    user: discord.Member, reason: str, evidence: str):
+        actor = interaction.user
+        if not is_staff(actor):
+            return await interaction.followup.send("❌ Only staff may kick.", ephemeral=True)
+        if user == actor:
+            return await interaction.followup.send("❌ You cannot kick yourself.", ephemeral=True)
+        if user.top_role >= interaction.guild.me.top_role:
+            return await interaction.followup.send("❌ I cannot kick this user.", ephemeral=True)
+
+        attachments   = [a for a in [attachment1, attachment2] if a]
+        evidence_full = format_evidence(evidence, attachments)
+        guild         = interaction.guild
+
         try:
             dm = discord.Embed(title="👢 You Have Been Kicked", color=discord.Color.orange(), timestamp=discord.utils.utcnow())
             dm.description = (
@@ -459,7 +473,7 @@ class ModerationCog(commands.Cog):
         log_embed.set_thumbnail(url=user.display_avatar.url)
         log_embed.add_field(name="Discord ID", value=f"{user.mention} (`{user.id}`)", inline=False)
         log_embed.add_field(name="Reason",     value=reason,                          inline=False)
-        log_embed.add_field(name="Evidence",   value=evidence,                        inline=False)
+        log_embed.add_field(name="Evidence",   value=evidence_full,                   inline=False)
         log_embed.add_field(name="Kicked By",  value=f"{actor.mention} (`{actor.id}`)", inline=False)
         log_embed.set_footer(text=f"User ID: {user.id}")
 
@@ -467,48 +481,45 @@ class ModerationCog(commands.Cog):
         if log_channel:
             await log_channel.send(embed=log_embed)
 
-    @app_commands.command(name="kick", description="Kick a member from the server.")
-    @app_commands.describe(user="The member to kick", reason="Reason", evidence="Evidence links", attachment1="Attachment", attachment2="Attachment")
-    async def kick_slash(self, interaction: discord.Interaction, user: discord.Member, reason: str, evidence: str = "None provided", attachment1: discord.Attachment = None, attachment2: discord.Attachment = None):
-        await interaction.response.defer()
-        actor = interaction.user
-        if not is_staff(actor):
-            return await interaction.followup.send("❌ Only staff may kick.", ephemeral=True)
-        if user == actor:
-            return await interaction.followup.send("❌ You cannot kick yourself.", ephemeral=True)
-        if user.top_role >= interaction.guild.me.top_role:
-            return await interaction.followup.send("❌ I cannot kick this user.", ephemeral=True)
-        attachments   = [a for a in [attachment1, attachment2] if a]
-        evidence_full = format_evidence(evidence, attachments)
-        await self._kick(interaction.guild, actor, user, reason, evidence_full)
         confirm = discord.Embed(title="✅ Member Kicked", color=discord.Color.orange(), timestamp=discord.utils.utcnow())
         confirm.add_field(name="Member", value=user.mention, inline=True)
         confirm.add_field(name="Reason", value=reason,       inline=True)
         await interaction.followup.send(embed=confirm)
 
-    @commands.command(name="kick")
-    async def kick_prefix(self, ctx: commands.Context, user: discord.Member, *, reason: str = "No reason provided"):
-        if not is_staff(ctx.author):
-            return await ctx.send("❌ Only staff may kick.")
-        if user == ctx.author:
-            return await ctx.send("❌ You cannot kick yourself.")
-        if user.top_role >= ctx.guild.me.top_role:
-            return await ctx.send("❌ I cannot kick this user.")
-        evidence = "\n".join(a.url for a in ctx.message.attachments) if ctx.message.attachments else "None provided"
-        await self._kick(ctx.guild, ctx.author, user, reason, evidence)
-        await ctx.send(f"✅ **{user.display_name}** has been kicked.")
+    # ── /mute ─────────────────────────────────────────────────────────────────
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # MUTE
-    # ─────────────────────────────────────────────────────────────────────────
+    @app_commands.command(name="mute", description="Timeout (mute) a member.")
+    @app_commands.describe(
+        user="The member to mute",
+        reason="Reason",
+        duration="Duration (10m, 1h, 1d — max 28 days)",
+        evidence="Evidence link(s)",
+        attachment1="Evidence attachment (optional)",
+        attachment2="Second evidence attachment (optional)"
+    )
+    async def mute(self, interaction: discord.Interaction,
+                   user: discord.Member, reason: str, duration: str,
+                   evidence: str = "None provided",
+                   attachment1: discord.Attachment = None,
+                   attachment2: discord.Attachment = None):
+        await interaction.response.defer()
 
-    async def _mute(self, guild: discord.Guild, actor: discord.Member,
-                    user: discord.Member, reason: str, duration: str, evidence: str):
+        actor = interaction.user
+        if not is_staff(actor):
+            return await interaction.followup.send("❌ Only staff may mute.", ephemeral=True)
+        if user == actor:
+            return await interaction.followup.send("❌ You cannot mute yourself.", ephemeral=True)
+        if user.top_role >= interaction.guild.me.top_role:
+            return await interaction.followup.send("❌ I cannot mute this user.", ephemeral=True)
+
         delta = parse_duration(duration)
         if not delta:
-            return None, "Invalid duration. Use `10m`, `1h`, `1d` etc."
+            return await interaction.followup.send("❌ Invalid duration. Use `10m`, `1h`, `1d` etc.", ephemeral=True)
         if delta > datetime.timedelta(days=28):
-            return None, "Maximum mute duration is 28 days."
+            return await interaction.followup.send("❌ Maximum mute duration is 28 days.", ephemeral=True)
+
+        attachments   = [a for a in [attachment1, attachment2] if a]
+        evidence_full = format_evidence(evidence, attachments)
 
         until     = discord.utils.utcnow() + delta
         until_str = until.strftime("%B %d, %Y at %I:%M %p UTC")
@@ -533,58 +544,34 @@ class ModerationCog(commands.Cog):
         log_embed.add_field(name="Reason",     value=reason,                          inline=False)
         log_embed.add_field(name="Duration",   value=duration,                        inline=True)
         log_embed.add_field(name="Unmuted",    value=until_str,                       inline=True)
-        log_embed.add_field(name="Evidence",   value=evidence,                        inline=False)
+        log_embed.add_field(name="Evidence",   value=evidence_full,                   inline=False)
         log_embed.add_field(name="Muted By",   value=f"{actor.mention} (`{actor.id}`)", inline=False)
         log_embed.set_footer(text=f"User ID: {user.id}")
 
-        log_channel = guild.get_channel(MUTE_LOG_CHANNEL)
+        log_channel = interaction.guild.get_channel(MUTE_LOG_CHANNEL)
         if log_channel:
             await log_channel.send(embed=log_embed)
 
-        return until_str, None
-
-    @app_commands.command(name="mute", description="Timeout (mute) a member.")
-    @app_commands.describe(user="The member to mute", reason="Reason", duration="Duration (10m, 1h, 1d)", evidence="Evidence links", attachment1="Attachment", attachment2="Attachment")
-    async def mute_slash(self, interaction: discord.Interaction, user: discord.Member, reason: str, duration: str, evidence: str = "None provided", attachment1: discord.Attachment = None, attachment2: discord.Attachment = None):
-        await interaction.response.defer()
-        actor = interaction.user
-        if not is_staff(actor):
-            return await interaction.followup.send("❌ Only staff may mute.", ephemeral=True)
-        if user == actor:
-            return await interaction.followup.send("❌ You cannot mute yourself.", ephemeral=True)
-        if user.top_role >= interaction.guild.me.top_role:
-            return await interaction.followup.send("❌ I cannot mute this user.", ephemeral=True)
-        attachments   = [a for a in [attachment1, attachment2] if a]
-        evidence_full = format_evidence(evidence, attachments)
-        until_str, error = await self._mute(interaction.guild, actor, user, reason, duration, evidence_full)
-        if error:
-            return await interaction.followup.send(f"❌ {error}", ephemeral=True)
         confirm = discord.Embed(title="✅ Member Muted", color=discord.Color.dark_grey(), timestamp=discord.utils.utcnow())
         confirm.add_field(name="Member",   value=user.mention, inline=True)
         confirm.add_field(name="Duration", value=duration,     inline=True)
         confirm.add_field(name="Reason",   value=reason,       inline=True)
         await interaction.followup.send(embed=confirm)
 
-    @commands.command(name="mute", aliases=["timeout"])
-    async def mute_prefix(self, ctx: commands.Context, user: discord.Member, duration: str, *, reason: str = "No reason provided"):
-        if not is_staff(ctx.author):
-            return await ctx.send("❌ Only staff may mute.")
-        if user == ctx.author:
-            return await ctx.send("❌ You cannot mute yourself.")
-        if user.top_role >= ctx.guild.me.top_role:
-            return await ctx.send("❌ I cannot mute this user.")
-        evidence = "\n".join(a.url for a in ctx.message.attachments) if ctx.message.attachments else "None provided"
-        until_str, error = await self._mute(ctx.guild, ctx.author, user, reason, duration, evidence)
-        if error:
-            return await ctx.send(f"❌ {error}")
-        await ctx.send(f"✅ **{user.display_name}** has been muted for **{duration}**.")
+    # ── /unmute ───────────────────────────────────────────────────────────────
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # UNMUTE
-    # ─────────────────────────────────────────────────────────────────────────
+    @app_commands.command(name="unmute", description="Remove a timeout from a member.")
+    @app_commands.describe(user="The member to unmute", reason="Reason (optional)")
+    async def unmute(self, interaction: discord.Interaction,
+                     user: discord.Member, reason: str = "Mute lifted by staff"):
+        await interaction.response.defer()
 
-    async def _unmute(self, guild: discord.Guild, actor: discord.Member,
-                      user: discord.Member, reason: str):
+        if not is_staff(interaction.user):
+            return await interaction.followup.send("❌ Only staff may unmute.", ephemeral=True)
+        if not user.is_timed_out():
+            return await interaction.followup.send(f"❌ {user.mention} is not muted.", ephemeral=True)
+
+        actor = interaction.user
         await user.timeout(None, reason=f"{reason} | Unmuted by {actor}")
 
         try:
@@ -602,40 +589,36 @@ class ModerationCog(commands.Cog):
         log_embed.add_field(name="Unmuted By", value=f"{actor.mention} (`{actor.id}`)", inline=False)
         log_embed.set_footer(text=f"User ID: {user.id}")
 
-        log_channel = guild.get_channel(MUTE_LOG_CHANNEL)
+        log_channel = interaction.guild.get_channel(MUTE_LOG_CHANNEL)
         if log_channel:
             await log_channel.send(embed=log_embed)
 
-    @app_commands.command(name="unmute", description="Remove a timeout from a member.")
-    @app_commands.describe(user="The member to unmute", reason="Reason (optional)")
-    async def unmute_slash(self, interaction: discord.Interaction, user: discord.Member, reason: str = "Mute lifted by staff"):
-        await interaction.response.defer()
-        if not is_staff(interaction.user):
-            return await interaction.followup.send("❌ Only staff may unmute.", ephemeral=True)
-        if not user.is_timed_out():
-            return await interaction.followup.send(f"❌ {user.mention} is not muted.", ephemeral=True)
-        await self._unmute(interaction.guild, interaction.user, user, reason)
         confirm = discord.Embed(title="✅ Member Unmuted", color=discord.Color.green(), timestamp=discord.utils.utcnow())
         confirm.add_field(name="Member", value=user.mention, inline=True)
         confirm.add_field(name="Reason", value=reason,       inline=True)
         await interaction.followup.send(embed=confirm)
 
-    @commands.command(name="unmute", aliases=["untimeout"])
-    async def unmute_prefix(self, ctx: commands.Context, user: discord.Member, *, reason: str = "Mute lifted by staff"):
-        if not is_staff(ctx.author):
-            return await ctx.send("❌ Only staff may unmute.")
-        if not user.is_timed_out():
-            return await ctx.send(f"❌ {user.mention} is not muted.")
-        await self._unmute(ctx.guild, ctx.author, user, reason)
-        await ctx.send(f"✅ **{user.display_name}** has been unmuted.")
+    # ── /unban ────────────────────────────────────────────────────────────────
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # UNBAN
-    # ─────────────────────────────────────────────────────────────────────────
+    @app_commands.command(name="unban", description="Unban a user from the server.")
+    @app_commands.describe(user_id="The Discord ID to unban", reason="Reason")
+    async def unban(self, interaction: discord.Interaction,
+                    user_id: str, reason: str = "No reason provided"):
+        await interaction.response.defer()
 
-    async def _unban(self, guild: discord.Guild, actor: discord.Member,
-                     user: discord.User, reason: str):
-        await guild.unban(user, reason=f"{reason} | Unbanned by {actor}")
+        if not is_admin(interaction.user):
+            return await interaction.followup.send("❌ Only Admins or above may unban.", ephemeral=True)
+
+        guild = interaction.guild
+        try:
+            user = await self.bot.fetch_user(int(user_id))
+        except (ValueError, discord.NotFound):
+            return await interaction.followup.send("❌ Could not find that user ID.", ephemeral=True)
+
+        try:
+            await guild.unban(user, reason=f"{reason} | Unbanned by {interaction.user}")
+        except discord.NotFound:
+            return await interaction.followup.send(f"❌ {user} is not banned.", ephemeral=True)
 
         try:
             expired = await self.bot.db.get_expired_temp_bans()
@@ -656,51 +639,33 @@ class ModerationCog(commands.Cog):
         log_embed = discord.Embed(title="✅ Member Unbanned", color=discord.Color.green(), timestamp=discord.utils.utcnow())
         log_embed.add_field(name="Discord ID",  value=f"{user.mention} (`{user.id}`)", inline=False)
         log_embed.add_field(name="Reason",      value=reason,                          inline=False)
-        log_embed.add_field(name="Unbanned By", value=f"{actor.mention} (`{actor.id}`)", inline=False)
+        log_embed.add_field(name="Unbanned By", value=interaction.user.mention,        inline=False)
         log_embed.set_footer(text=f"User ID: {user.id}")
 
         log_channel = guild.get_channel(UNBAN_LOG_CHANNEL)
         if log_channel:
             await log_channel.send(embed=log_embed)
 
-    @app_commands.command(name="unban", description="Unban a user from the server.")
-    @app_commands.describe(user_id="The Discord ID to unban", reason="Reason")
-    async def unban_slash(self, interaction: discord.Interaction, user_id: str, reason: str = "No reason provided"):
-        await interaction.response.defer()
-        if not is_admin(interaction.user):
-            return await interaction.followup.send("❌ Only Admins or above may unban.", ephemeral=True)
-        try:
-            user = await self.bot.fetch_user(int(user_id))
-        except (ValueError, discord.NotFound):
-            return await interaction.followup.send("❌ Could not find that user ID.", ephemeral=True)
-        try:
-            await self._unban(interaction.guild, interaction.user, user, reason)
-        except discord.NotFound:
-            return await interaction.followup.send(f"❌ {user} is not banned.", ephemeral=True)
         confirm = discord.Embed(title="✅ Member Unbanned", color=discord.Color.green(), timestamp=discord.utils.utcnow())
         confirm.add_field(name="User",   value=f"{user} (`{user.id}`)", inline=True)
         confirm.add_field(name="Reason", value=reason,                  inline=True)
         await interaction.followup.send(embed=confirm)
 
-    @commands.command(name="unban")
-    async def unban_prefix(self, ctx: commands.Context, user_id: str, *, reason: str = "No reason provided"):
-        if not is_admin(ctx.author):
-            return await ctx.send("❌ Only Admins or above may unban.")
-        try:
-            user = await self.bot.fetch_user(int(user_id))
-        except (ValueError, discord.NotFound):
-            return await ctx.send("❌ Could not find that user ID.")
-        try:
-            await self._unban(ctx.guild, ctx.author, user, reason)
-        except discord.NotFound:
-            return await ctx.send(f"❌ {user} is not banned.")
-        await ctx.send(f"✅ **{user}** has been unbanned.")
+    # ── /lockdownserver ───────────────────────────────────────────────────────
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # LOCKDOWN
-    # ─────────────────────────────────────────────────────────────────────────
+    @app_commands.command(name="lockdownserver", description="Lock specific channels.")
+    @app_commands.describe(reason="Reason for the lockdown")
+    async def lockdownserver(self, interaction: discord.Interaction,
+                              reason: str = "No reason provided"):
+        await interaction.response.defer()
 
-    async def _lockdown(self, guild: discord.Guild, actor: discord.Member, reason: str):
+        if not is_head(interaction.user):
+            return await interaction.followup.send(
+                "❌ Only CM/Overseer/Creators may lockdown.", ephemeral=True
+            )
+
+        actor      = interaction.user
+        guild      = interaction.guild
         staff_role = guild.get_role(ROLE_STAFF)
         admin_role = guild.get_role(ROLE_ADMIN)
         locked     = 0
@@ -761,9 +726,26 @@ class ModerationCog(commands.Cog):
         if log_channel:
             await log_channel.send(embed=log_embed)
 
-        return locked, failed
+        confirm = discord.Embed(title="🔒 Server Locked Down", color=discord.Color.red(), timestamp=discord.utils.utcnow())
+        confirm.add_field(name="Reason", value=reason,              inline=True)
+        confirm.add_field(name="Locked", value=f"{locked} channels", inline=True)
+        await interaction.followup.send(embed=confirm)
 
-    async def _unlockdown(self, guild: discord.Guild, actor: discord.Member, reason: str):
+    # ── /unlockdownserver ─────────────────────────────────────────────────────
+
+    @app_commands.command(name="unlockdownserver", description="Unlock all channels after a lockdown.")
+    @app_commands.describe(reason="Reason for ending the lockdown")
+    async def unlockdownserver(self, interaction: discord.Interaction,
+                                reason: str = "Lockdown lifted"):
+        await interaction.response.defer()
+
+        if not is_head(interaction.user):
+            return await interaction.followup.send(
+                "❌ Only CM/Overseer/Creators may unlock.", ephemeral=True
+            )
+
+        actor    = interaction.user
+        guild    = interaction.guild
         unlocked = 0
         failed   = 0
 
@@ -813,52 +795,29 @@ class ModerationCog(commands.Cog):
         if log_channel:
             await log_channel.send(embed=log_embed)
 
-        return unlocked, failed
-
-    @app_commands.command(name="lockdownserver", description="Lock specific channels.")
-    @app_commands.describe(reason="Reason for the lockdown")
-    async def lockdown_slash(self, interaction: discord.Interaction, reason: str = "No reason provided"):
-        await interaction.response.defer()
-        if not is_head(interaction.user):
-            return await interaction.followup.send("❌ Only CM/Overseer/Creators may lockdown.", ephemeral=True)
-        locked, failed = await self._lockdown(interaction.guild, interaction.user, reason)
-        confirm = discord.Embed(title="🔒 Server Locked Down", color=discord.Color.red(), timestamp=discord.utils.utcnow())
-        confirm.add_field(name="Reason", value=reason,              inline=True)
-        confirm.add_field(name="Locked", value=f"{locked} channels", inline=True)
-        await interaction.followup.send(embed=confirm)
-
-    @commands.command(name="lockdown", aliases=["lockdownserver"])
-    async def lockdown_prefix(self, ctx: commands.Context, *, reason: str = "No reason provided"):
-        if not is_head(ctx.author):
-            return await ctx.send("❌ Only CM/Overseer/Creators may lockdown.")
-        locked, failed = await self._lockdown(ctx.guild, ctx.author, reason)
-        await ctx.send(f"🔒 Server locked down. **{locked}** channel(s) locked.")
-
-    @app_commands.command(name="unlockdownserver", description="Unlock all channels after a lockdown.")
-    @app_commands.describe(reason="Reason for ending the lockdown")
-    async def unlockdown_slash(self, interaction: discord.Interaction, reason: str = "Lockdown lifted"):
-        await interaction.response.defer()
-        if not is_head(interaction.user):
-            return await interaction.followup.send("❌ Only CM/Overseer/Creators may unlock.", ephemeral=True)
-        unlocked, failed = await self._unlockdown(interaction.guild, interaction.user, reason)
         confirm = discord.Embed(title="🔓 Server Unlocked", color=discord.Color.green(), timestamp=discord.utils.utcnow())
-        confirm.add_field(name="Reason",   value=reason,                inline=True)
+        confirm.add_field(name="Reason",   value=reason,               inline=True)
         confirm.add_field(name="Unlocked", value=f"{unlocked} channels", inline=True)
         await interaction.followup.send(embed=confirm)
 
-    @commands.command(name="unlock", aliases=["unlockdownserver"])
-    async def unlockdown_prefix(self, ctx: commands.Context, *, reason: str = "Lockdown lifted"):
-        if not is_head(ctx.author):
-            return await ctx.send("❌ Only CM/Overseer/Creators may unlock.")
-        unlocked, failed = await self._unlockdown(ctx.guild, ctx.author, reason)
-        await ctx.send(f"🔓 Server unlocked. **{unlocked}** channel(s) unlocked.")
+    # ── /staffstrike ──────────────────────────────────────────────────────────
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # STAFF STRIKES
-    # ─────────────────────────────────────────────────────────────────────────
+    @app_commands.command(name="staffstrike", description="Issue a strike to a staff member.")
+    @app_commands.describe(user="The staff member", reason="Reason", evidence="Evidence (optional)")
+    async def staffstrike(self, interaction: discord.Interaction,
+                          user: discord.Member, reason: str,
+                          evidence: str = "None provided"):
+        await interaction.response.defer()
 
-    async def _staffstrike(self, guild: discord.Guild, actor: discord.Member,
-                           user: discord.Member, reason: str, evidence: str):
+        actor = interaction.user
+        if not is_head(actor):
+            return await interaction.followup.send("❌ Only CM/Overseer/Creators may strike staff.", ephemeral=True)
+        if not is_staff(user):
+            return await interaction.followup.send(f"❌ {user.mention} is not a staff member.", ephemeral=True)
+        if user == actor:
+            return await interaction.followup.send("❌ You cannot strike yourself.", ephemeral=True)
+
+        guild = interaction.guild
         await self.bot.db.add_staff_strike(str(user.id), str(guild.id), reason, evidence, str(actor.id))
         strikes      = await self.bot.db.get_staff_strikes(str(user.id), str(guild.id))
         strike_count = len(strikes)
@@ -898,7 +857,6 @@ class ModerationCog(commands.Cog):
         except discord.Forbidden:
             pass
 
-        auto_fired = False
         if strike_count >= 3:
             roles_removed = []
             for role_id in ALL_STAFF_ROLES:
@@ -918,54 +876,30 @@ class ModerationCog(commands.Cog):
             )
             if log_channel:
                 await log_channel.send(embed=fire_embed)
-            auto_fired = True
 
-        return strike_count, auto_fired
-
-    @app_commands.command(name="staffstrike", description="Issue a strike to a staff member.")
-    @app_commands.describe(user="The staff member", reason="Reason", evidence="Evidence (optional)")
-    async def staffstrike_slash(self, interaction: discord.Interaction, user: discord.Member, reason: str, evidence: str = "None provided"):
-        await interaction.response.defer()
-        actor = interaction.user
-        if not is_head(actor):
-            return await interaction.followup.send("❌ Only CM/Overseer/Creators may strike staff.", ephemeral=True)
-        if not is_staff(user):
-            return await interaction.followup.send(f"❌ {user.mention} is not a staff member.", ephemeral=True)
-        if user == actor:
-            return await interaction.followup.send("❌ You cannot strike yourself.", ephemeral=True)
-        count, auto_fired = await self._staffstrike(interaction.guild, actor, user, reason, evidence)
         confirm = discord.Embed(title="✅ Staff Strike Issued", color=discord.Color.orange(), timestamp=discord.utils.utcnow())
-        confirm.add_field(name="Staff Member", value=user.mention,       inline=True)
-        confirm.add_field(name="Strike Count", value=f"{count}/3",       inline=True)
-        confirm.add_field(name="Reason",       value=reason,             inline=False)
-        if auto_fired:
+        confirm.add_field(name="Staff Member",  value=user.mention,        inline=True)
+        confirm.add_field(name="Strike Count",  value=f"{strike_count}/3", inline=True)
+        confirm.add_field(name="Reason",        value=reason,              inline=False)
+        if strike_count >= 3:
             confirm.add_field(name="⚠️ Auto Action", value="Staff member has been fired.", inline=False)
         await interaction.followup.send(embed=confirm)
 
-    @commands.command(name="staffstrike")
-    async def staffstrike_prefix(self, ctx: commands.Context, user: discord.Member, *, reason: str = "No reason provided"):
-        if not is_head(ctx.author):
-            return await ctx.send("❌ Only CM/Overseer/Creators may strike staff.")
-        if not is_staff(user):
-            return await ctx.send(f"❌ {user.mention} is not a staff member.")
-        if user == ctx.author:
-            return await ctx.send("❌ You cannot strike yourself.")
-        count, auto_fired = await self._staffstrike(ctx.guild, ctx.author, user, reason, "None provided")
-        msg = f"✅ Staff strike issued to **{user.display_name}**. Strike count: **{count}/3**."
-        if auto_fired:
-            msg += " They have been **auto-fired**."
-        await ctx.send(msg)
+    # ── /viewstaffstrikes ─────────────────────────────────────────────────────
 
     @app_commands.command(name="viewstaffstrikes", description="View staff strikes for a staff member.")
     @app_commands.describe(user="The staff member to check")
-    async def viewstaffstrikes_slash(self, interaction: discord.Interaction, user: discord.Member):
+    async def viewstaffstrikes(self, interaction: discord.Interaction, user: discord.Member):
         await interaction.response.defer()
+
         if not is_head(interaction.user):
             return await interaction.followup.send("❌ Only CM/Overseer/Creators may view staff strikes.", ephemeral=True)
+
         guild   = interaction.guild
         strikes = await self.bot.db.get_staff_strikes(str(user.id), str(guild.id))
         count   = len(strikes)
-        embed   = discord.Embed(
+
+        embed = discord.Embed(
             title=f"⚡ Staff Strikes — {user.display_name}",
             color=discord.Color.orange() if count > 0 else discord.Color.green(),
             timestamp=discord.utils.utcnow()
@@ -973,6 +907,7 @@ class ModerationCog(commands.Cog):
         embed.set_thumbnail(url=user.display_avatar.url)
         embed.add_field(name="Total Strikes", value=f"**{count}/3**", inline=True)
         embed.add_field(name="Discord ID",    value=f"`{user.id}`",   inline=True)
+
         if strikes:
             for i, s in enumerate(strikes, 1):
                 date       = str(s.get("created_at", ""))[:10]
@@ -985,40 +920,38 @@ class ModerationCog(commands.Cog):
                 )
         else:
             embed.add_field(name="No Strikes", value="This staff member has no strikes.", inline=False)
+
         embed.set_footer(text=f"User ID: {user.id}")
         await interaction.followup.send(embed=embed)
 
-    @commands.command(name="viewstaffstrikes", aliases=["staffstrikes"])
-    async def viewstaffstrikes_prefix(self, ctx: commands.Context, user: discord.Member):
-        if not is_head(ctx.author):
-            return await ctx.send("❌ Only CM/Overseer/Creators may view staff strikes.")
-        strikes = await self.bot.db.get_staff_strikes(str(user.id), str(ctx.guild.id))
-        count   = len(strikes)
-        await ctx.send(f"⚡ **{user.display_name}** has **{count}/3** staff strike(s).")
+    # ── /clearstaffstrikes ────────────────────────────────────────────────────
 
     @app_commands.command(name="clearstaffstrikes", description="Clear all staff strikes for a staff member.")
     @app_commands.describe(user="The staff member whose strikes to clear")
-    async def clearstaffstrikes_slash(self, interaction: discord.Interaction, user: discord.Member):
+    async def clearstaffstrikes(self, interaction: discord.Interaction, user: discord.Member):
         await interaction.response.defer(ephemeral=True)
+
         if not is_head(interaction.user):
             return await interaction.followup.send("❌ Only CM/Overseer/Creators may clear staff strikes.", ephemeral=True)
-        removed = await self.bot.db.clear_staff_strikes(str(user.id), str(interaction.guild.id))
-        embed = discord.Embed(title="✅ Staff Strikes Cleared", description=f"Cleared **{removed}** strike(s) from {user.mention}.", color=discord.Color.green(), timestamp=discord.utils.utcnow())
+
+        guild   = interaction.guild
+        removed = await self.bot.db.clear_staff_strikes(str(user.id), str(guild.id))
+
+        embed = discord.Embed(
+            title="✅ Staff Strikes Cleared",
+            description=f"Cleared **{removed}** strike(s) from {user.mention}.",
+            color=discord.Color.green(),
+            timestamp=discord.utils.utcnow()
+        )
         await interaction.followup.send(embed=embed)
-        log_channel = interaction.guild.get_channel(STAFF_STRIKE_LOG_CHANNEL)
+
+        log_channel = guild.get_channel(STAFF_STRIKE_LOG_CHANNEL)
         if log_channel:
             e = discord.Embed(title="🗑️ Staff Strikes Cleared", color=discord.Color.green(), timestamp=discord.utils.utcnow())
             e.add_field(name="Staff Member", value=f"{user.mention} (`{user.id}`)", inline=True)
             e.add_field(name="Cleared By",   value=interaction.user.mention,        inline=True)
             e.add_field(name="Removed",      value=f"{removed} strike(s)",          inline=True)
             await log_channel.send(embed=e)
-
-    @commands.command(name="clearstaffstrikes")
-    async def clearstaffstrikes_prefix(self, ctx: commands.Context, user: discord.Member):
-        if not is_head(ctx.author):
-            return await ctx.send("❌ Only CM/Overseer/Creators may clear staff strikes.")
-        removed = await self.bot.db.clear_staff_strikes(str(user.id), str(ctx.guild.id))
-        await ctx.send(f"✅ Cleared **{removed}** staff strike(s) from **{user.display_name}**.")
 
 
 async def setup(bot):
