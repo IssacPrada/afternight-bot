@@ -16,7 +16,7 @@ IMMUNE_ROLES: set[int] = {
     1387649282139754587,  # [C] Creators
 }
 
-ALLOWED_TO_ADD: set[int] = {
+ALLOWED_TO_MANAGE: set[int] = {
     1458302857764802683,  # Community Manager
     1458302854887510210,  # Overseer of Staff
     1387649282139754587,  # [C] Creators
@@ -26,16 +26,22 @@ APPEAL_SERVER = "https://discord.gg/dQAbatSEcw"
 
 
 def load_slurs() -> list[str]:
-    if not os.path.exists(SLURS_FILE):
+    try:
+        if not os.path.exists(SLURS_FILE):
+            return []
+        with open(SLURS_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
         return []
-    with open(SLURS_FILE, "r") as f:
-        return json.load(f)
 
 
 def save_slurs(slurs: list[str]):
-    os.makedirs(os.path.dirname(SLURS_FILE), exist_ok=True)
-    with open(SLURS_FILE, "w") as f:
-        json.dump(slurs, f)
+    try:
+        os.makedirs(os.path.dirname(SLURS_FILE), exist_ok=True)
+        with open(SLURS_FILE, "w") as f:
+            json.dump(slurs, f)
+    except Exception:
+        pass
 
 
 def contains_slur(content: str, slurs: list[str]) -> bool:
@@ -48,7 +54,7 @@ def contains_slur(content: str, slurs: list[str]) -> bool:
 
 class AutoModCog(commands.Cog):
     def __init__(self, bot):
-        self.bot  = bot
+        self.bot   = bot
         self.slurs = load_slurs()
 
     # ── Message listener ──────────────────────────────────────────────────────
@@ -60,7 +66,6 @@ class AutoModCog(commands.Cog):
         if not message.guild:
             return
 
-        # ── Check if immune ───────────────────────────────────────────────────
         member_role_ids = {r.id for r in message.author.roles}
         if member_role_ids & IMMUNE_ROLES:
             return
@@ -94,7 +99,7 @@ class AutoModCog(commands.Cog):
 
         # ── Warn message in channel ───────────────────────────────────────────
         try:
-            warn_msg = await message.channel.send(
+            await message.channel.send(
                 f"{message.author.mention} you have been warned for slur usage.",
                 delete_after=10
             )
@@ -111,8 +116,7 @@ class AutoModCog(commands.Cog):
             dm.description = (
                 f"You have been warned in **Afternight Legacies** for **slur usage**.\n\n"
                 f"**Warning Count:** {warn_count}\n\n"
-                f"If you believe this was a mistake, open a ticket in our appeal server:\n"
-                f"{APPEAL_SERVER}"
+                f"If you believe this was a mistake, open a ticket:\n{APPEAL_SERVER}"
             )
             dm.set_footer(text="Afternight Auto Moderation")
             await message.author.send(embed=dm)
@@ -142,14 +146,13 @@ class AutoModCog(commands.Cog):
     # ── /addslur ──────────────────────────────────────────────────────────────
 
     @app_commands.command(name="addslur", description="Add a word to the automod slur list.")
-    @app_commands.describe(word="The word to add to the slur list")
+    @app_commands.describe(word="The word to add")
     async def addslur(self, interaction: discord.Interaction, word: str):
         await interaction.response.defer(ephemeral=True)
 
-        actor_role_ids = {r.id for r in interaction.user.roles}
-        if not actor_role_ids & ALLOWED_TO_ADD:
+        if not {r.id for r in interaction.user.roles} & ALLOWED_TO_MANAGE:
             return await interaction.followup.send(
-                "❌ Only Community Manager, Overseer of Staff, or Creators may add slurs.",
+                "❌ Only Community Manager, Overseer of Staff, or Creators may manage the slur list.",
                 ephemeral=True
             )
 
@@ -163,7 +166,7 @@ class AutoModCog(commands.Cog):
         save_slurs(self.slurs)
 
         await interaction.followup.send(
-            f"✅ Added `{word}` to the automod slur list. Total: {len(self.slurs)} word(s).",
+            f"✅ Added `{word}` to the automod slur list. Total: **{len(self.slurs)}** word(s).",
             ephemeral=True
         )
 
@@ -174,10 +177,9 @@ class AutoModCog(commands.Cog):
     async def removeslur(self, interaction: discord.Interaction, word: str):
         await interaction.response.defer(ephemeral=True)
 
-        actor_role_ids = {r.id for r in interaction.user.roles}
-        if not actor_role_ids & ALLOWED_TO_ADD:
+        if not {r.id for r in interaction.user.roles} & ALLOWED_TO_MANAGE:
             return await interaction.followup.send(
-                "❌ Only Community Manager, Overseer of Staff, or Creators may remove slurs.",
+                "❌ Only Community Manager, Overseer of Staff, or Creators may manage the slur list.",
                 ephemeral=True
             )
 
@@ -191,7 +193,7 @@ class AutoModCog(commands.Cog):
         save_slurs(self.slurs)
 
         await interaction.followup.send(
-            f"✅ Removed `{word}` from the automod slur list. Total: {len(self.slurs)} word(s).",
+            f"✅ Removed `{word}` from the automod slur list. Total: **{len(self.slurs)}** word(s).",
             ephemeral=True
         )
 
@@ -201,12 +203,14 @@ class AutoModCog(commands.Cog):
     async def viewslurs(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
 
-        actor_role_ids = {r.id for r in interaction.user.roles}
-        if not actor_role_ids & ALLOWED_TO_ADD:
+        if not {r.id for r in interaction.user.roles} & ALLOWED_TO_MANAGE:
             return await interaction.followup.send(
                 "❌ Only Community Manager, Overseer of Staff, or Creators may view the slur list.",
                 ephemeral=True
             )
+
+        # ── Reload from file in case another instance updated it ──────────────
+        self.slurs = load_slurs()
 
         if not self.slurs:
             return await interaction.followup.send(
