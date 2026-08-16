@@ -29,9 +29,11 @@ intents.messages        = True
 
 class AfternightBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix="!", intents=intents)
-        self.db             = Database()
-        self.log_channel_id = LOG_CHANNEL_ID
+        super().__init__(
+            command_prefix="!",
+            intents=intents,
+            help_command=None
+        )
 
     async def setup_hook(self):
         await self.db.init()
