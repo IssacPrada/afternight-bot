@@ -18,7 +18,6 @@ class HelpCog(commands.Cog):
             color=discord.Color.blurple(),
             timestamp=discord.utils.utcnow()
         )
-
         embed.add_field(
             name="⚔️ Moderation — Staff",
             value=(
@@ -30,7 +29,6 @@ class HelpCog(commands.Cog):
             ),
             inline=False
         )
-
         embed.add_field(
             name="🔨 Moderation — Admin+",
             value=(
@@ -43,7 +41,6 @@ class HelpCog(commands.Cog):
             ),
             inline=False
         )
-
         embed.add_field(
             name="👑 Moderation — CM/Overseer/Creators",
             value=(
@@ -53,7 +50,6 @@ class HelpCog(commands.Cog):
             ),
             inline=False
         )
-
         embed.add_field(
             name="🏰 Staff Management",
             value=(
@@ -65,7 +61,6 @@ class HelpCog(commands.Cog):
             ),
             inline=False
         )
-
         embed.add_field(
             name="⚡ Faction Commands",
             value=(
@@ -78,7 +73,6 @@ class HelpCog(commands.Cog):
             ),
             inline=False
         )
-
         embed.add_field(
             name="📊 Activity",
             value=(
@@ -87,7 +81,6 @@ class HelpCog(commands.Cog):
             ),
             inline=False
         )
-
         embed.add_field(
             name="📢 Announcements",
             value=(
@@ -97,7 +90,6 @@ class HelpCog(commands.Cog):
             ),
             inline=False
         )
-
         embed.add_field(
             name="🤖 AutoMod",
             value=(
@@ -107,7 +99,6 @@ class HelpCog(commands.Cog):
             ),
             inline=False
         )
-
         embed.add_field(
             name="🔑 Account",
             value=(
@@ -116,7 +107,6 @@ class HelpCog(commands.Cog):
             ),
             inline=False
         )
-
         embed.add_field(
             name="📋 Mass Actions",
             value=(
@@ -126,7 +116,6 @@ class HelpCog(commands.Cog):
             ),
             inline=False
         )
-
         embed.set_footer(text="The Watcher V2 — Afternight Legacies")
         return embed
 
