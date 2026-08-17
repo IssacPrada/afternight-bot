@@ -1,5 +1,5 @@
 """
-cogs/help.py — /help command
+cogs/help.py — /help slash command only
 """
 import discord
 from discord import app_commands
