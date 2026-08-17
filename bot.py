@@ -2,7 +2,6 @@ import os
 import asyncio
 import logging
 from dotenv import load_dotenv
-
 load_dotenv()
 
 import discord
@@ -34,6 +33,8 @@ class AfternightBot(commands.Bot):
             intents=intents,
             help_command=None
         )
+        self.db             = Database()
+        self.log_channel_id = LOG_CHANNEL_ID
 
     async def setup_hook(self):
         await self.db.init()
