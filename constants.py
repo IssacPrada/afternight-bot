@@ -1,103 +1,132 @@
 """
-constants.py — Role IDs, faction config, and shared helpers.
+constants.py — Role IDs, channel IDs, faction config, and shared helpers.
 """
 import discord
 from typing import Optional
 
+# ─── Channels ─────────────────────────────────────────────────────────────────
+RESIGN_LOG_CHANNEL_ID        = 1575223632408350760
+INACTIVITY_REVIEW_CHANNEL_ID   = 1575292981739524137
+INACTIVITY_APPROVED_CHANNEL_ID = 1575292981739524137
+BLACKLIST_CHANNEL_ID           = 1575292981739524137  # Update if you have a dedicated blacklist channel ID
+
+# ─── Core / Leadership Roles ──────────────────────────────────────────────────
+ROLE_MEMBER       = 1575231657638764766  # [M] Member.
+ROLE_HONORED      = 1575229161176567828  # [HMB] Honored Member.
+ROLE_TESTER       = 1575227735914061924  # [T] Tester.
+ROLE_CONTRIBUTOR  = 1575227506443812964  # [C] Contributor.
+ROLE_MEDIA        = 1575231719945281677  # [MP] Media Partner.
+
+ROLE_STAFF_TEAM   = 1575233247598870568  # Staff
+ROLE_ADMIN_TEAM   = 1575233276556214343  # Admin
+ROLE_SOH          = 1575225697406947418  # [SOH] Staff OverHead.
+ROLE_CM           = 1575225624837099631  # [CM] Community Manager.
+ROLE_DEV          = 1575233518265700353  # [D] Developer.
+ROLE_CO_OWNER     = 1575225368577704116  # [Co-O] Co-Owner.
+ROLE_OWNER        = 1575225137542733954  # [O] Owner.
+
 # ─── Staff Hierarchy (ordered lowest → highest) ───────────────────────────────
 STAFF_HIERARCHY: list[int] = [
-    1458302361843007541,   # Trial Moderator
-    1458302463953207347,   # Moderator
-    1458302642978816104,   # Senior Moderator
-    1458302648657645679,   # Lead Moderator
-    1458302715212992615,   # Administrator
-    1458302729377153208,   # Senior Administrator
-    1458302734536278227,   # Lead Administrator
+    1575226667537010718,  # [TM] Trial Moderator.
+    1575226626378039426,  # [MOD] Moderator.
+    1575226571076411515,  # [JM] Junior Moderator
+    1575226502490882340,  # [SM] Senior Moderator.
+    1575226359939211446,  # [HM] Head Moderator
+    1575226137003687976,  # [A] Administrator.
+    1575225917368705104,  # [SA] Senior Administrator.
 ]
 
 STAFF_HIERARCHY_NAMES: dict[int, str] = {
-    1458302361843007541: "Trial Moderator",
-    1458302463953207347: "Moderator",
-    1458302642978816104: "Senior Moderator",
-    1458302648657645679: "Lead Moderator",
-    1458302715212992615: "Administrator",
-    1458302729377153208: "Senior Administrator",
-    1458302734536278227: "Lead Administrator",
+    1575226667537010718: "[TM] Trial Moderator",
+    1575226626378039426: "[MOD] Moderator",
+    1575226571076411515: "[JM] Junior Moderator",
+    1575226502490882340: "[SM] Senior Moderator",
+    1575226359939211446: "[HM] Head Moderator",
+    1575226137003687976: "[A] Administrator",
+    1575225917368705104: "[SA] Senior Administrator",
 }
 
-# ─── Staff Team Roles ─────────────────────────────────────────────────────────
-ROLE_STAFF_TEAM        = 1458304077136920668
-ROLE_ADMIN_TEAM        = 1458303682180284681
-
-# ─── Privileged Roles (can use /fire, /promote, /demote, /shout) ─────────────
-FIRE_ALLOWED_ROLES: set[int] = {
-    1458302854887510210,   # Overseer of Staff
-    1458302857764802683,   # Community Manager
-    1387649282139754587,   # [C] Creators
-}
-
-# ─── Faction Leader Roles ─────────────────────────────────────────────────────
-FACTION_LEADERS: dict[int, str] = {
-    1458305854611914866: "Sanguis Order",
-    1458305860739661916: "Eldritch Thorn",
-    1458305839113830528: "Silver Venom",
-    1458305866565554249: "Sepharine Coven",
-}
-
-# ─── Faction Council Roles ────────────────────────────────────────────────────
-FACTION_COUNCIL_GLOBAL = 1487512441373065327  # General Faction Council role
-
-FACTION_OVERSEERS: dict[int, str] = {
-    1487867888592490606: "Sanguis Order",    # Sanguis Order Overseer
-    1487867988446154925: "Eldritch Thorn",   # Eldritch Thorn Overseer
-    1487868098492104767: "Silver Venom",     # Silvervenom Overseer
-    # Sepharine Coven has no overseer
-}
-
-# ─── Faction Member Roles ─────────────────────────────────────────────────────
-FACTION_MEMBERS: dict[int, str] = {
-    1458305856297893932: "Sanguis Order",    # Sanguis Order Vampire
-    1458305862748868619: "Eldritch Thorn",   # Eldritch Thorn Witch
-    1458305842372673639: "Silver Venom",     # Silver Venom Werewolf
-    1458305868495065262: "Sepharine Coven",  # Sepharine Werewitch
-}
-
-# ─── All faction roles to strip on blacklist/demotion ─────────────────────────
-ALL_FACTION_ROLES: list[int] = [
-    1458305856297893932,  # Sanguis Order Vampire
-    1458305862748868619,  # Eldritch Thorn Witch
-    1458305842372673639,  # Silver Venom Werewolf
-    1458305868495065262,  # Sepharine Werewitch
-    1458305763306111092,  # Faction Member
-    1458305760839864422,  # Faction Elder
+SENIOR_STAFF_ROLES: list[int] = [
+    ROLE_SOH,
+    ROLE_CM,
+    ROLE_DEV,
+    ROLE_CO_OWNER,
+    ROLE_OWNER,
 ]
 
-# ─── Roblox Group Rank IDs per faction ───────────────────────────────────────
+# ─── Privileged Roles ─────────────────────────────────────────────────────────
+FIRE_ALLOWED_ROLES: set[int] = {
+    ROLE_SOH,
+    ROLE_CM,
+    ROLE_DEV,
+    ROLE_CO_OWNER,
+    ROLE_OWNER,
+}
+
+INACTIVITY_REVIEWER_ROLES: set[int] = {
+    ROLE_SOH,
+    ROLE_CM,
+    ROLE_DEV,
+    ROLE_CO_OWNER,
+    ROLE_OWNER,
+}
+
+# ─── Faction Roles ────────────────────────────────────────────────────────────
+FACTION_LEADER_MAIN_ROLE = 1575250992935735467  # [FL] Faction Leader
+FACTION_GUIDE_ROLE       = 1575228996801663207  # [FG] Faction Guide.
+FACTION_MEMBER_MAIN_ROLE = 1575228851653443604  # [FM] Faction Member.
+FACTION_COUNCIL_GLOBAL   = 1575227864784175185  # [FO] Faction Overseer.
+
+FACTION_LEADERS: dict[int, str] = {
+    1575228479006449797: "Sanguis Order",   # [SOL] Sanguis Order Leader.
+    1575228561881571481: "Eldritch Thorn",  # [ETL] Eldritch Thorn Leader.
+    1575228378850525287: "SilverVenom",     # [SVL] SilverVenom Leader.
+    1575228640507990096: "Seraphine Coven", # [SCL] Seraphine Coven Leader.
+}
+
+FACTION_OVERSEERS: dict[int, str] = {
+    1575227909897986108: "Sanguis Order",   # [SOO} Sanguis Order Overseer.
+    1575227971965423756: "Eldritch Thorn",  # [ETO] Eldritch Thorn Overseer.
+    1575228298416496650: "SilverVenom",     # [SVO] SilverVenom Overseer.
+}
+
+FACTION_MEMBERS: dict[int, str] = {
+    1575232569455280329: "Sanguis Order",   # [SOM] Sanguis Order Member.
+    1575232880555200693: "Eldritch Thorn",  # [ETM] Eldritch Thorn Member.
+    1575232935555112970: "SilverVenom",     # [SVM] SilverVenom Member.
+    1575232712543965324: "Seraphine Coven", # [SCM] Seraphine Coven Member.
+}
+
+ALL_FACTION_ROLES: list[int] = [
+    1575232569455280329,  # [SOM]
+    1575232880555200693,  # [ETM]
+    1575232935555112970,  # [SVM]
+    1575232712543965324,  # [SCM]
+    FACTION_LEADER_MAIN_ROLE,
+    FACTION_GUIDE_ROLE,
+    FACTION_MEMBER_MAIN_ROLE,
+]
+
 FACTION_ROBLOX_RANKS: dict[str, int] = {
     "Sanguis Order":   10,
     "Eldritch Thorn":  20,
-    "Silver Venom":    30,
-    "Sepharine Coven": 40,
+    "SilverVenom":     30,
+    "Seraphine Coven": 40,
 }
 
-# ─── Faction Colors ───────────────────────────────────────────────────────────
 FACTION_COLORS: dict[str, int] = {
     "Sanguis Order":   0x710000,
     "Eldritch Thorn":  0x702794,
-    "Silver Venom":    0x236A00,
-    "Sepharine Coven": 0xECBF66,
+    "SilverVenom":     0x236A00,
+    "Seraphine Coven": 0xECBF66,
 }
 
-# ─── Strike thresholds ────────────────────────────────────────────────────────
 STRIKE_STATUS = {
     0: ("✅ Normal",        discord.Color.green()),
     1: ("⚠️ Warning",       discord.Color.yellow()),
     2: ("🔴 At Risk",       discord.Color.orange()),
     3: ("💀 Final Warning", discord.Color.red()),
 }
-
-# ─── Channels ─────────────────────────────────────────────────────────────────
-BLACKLIST_CHANNEL_ID = 1488313373035724890
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -110,7 +139,6 @@ def get_member_rank_index(member: discord.Member) -> int:
     return best
 
 def get_member_faction(member: discord.Member) -> Optional[str]:
-    """Return faction name if member holds a faction leader OR member role."""
     member_role_ids = {r.id for r in member.roles}
     for role_id, faction in FACTION_MEMBERS.items():
         if role_id in member_role_ids:
@@ -121,7 +149,6 @@ def get_member_faction(member: discord.Member) -> Optional[str]:
     return None
 
 def get_leader_faction(member: discord.Member) -> Optional[str]:
-    """Return faction name only if the member holds a LEADER role."""
     member_role_ids = {r.id for r in member.roles}
     for role_id, faction in FACTION_LEADERS.items():
         if role_id in member_role_ids:
@@ -129,7 +156,6 @@ def get_leader_faction(member: discord.Member) -> Optional[str]:
     return None
 
 def get_council_faction(member: discord.Member) -> Optional[str]:
-    """Return faction name if member holds a faction overseer role."""
     member_role_ids = {r.id for r in member.roles}
     for role_id, faction in FACTION_OVERSEERS.items():
         if role_id in member_role_ids:
@@ -137,33 +163,21 @@ def get_council_faction(member: discord.Member) -> Optional[str]:
     return None
 
 def can_use_faction_commands(member: discord.Member) -> tuple[bool, Optional[str]]:
-    """
-    Check if a member can use faction commands (strike, viewstrike, clearstrike,
-    factiondemote, blacklist, unblacklist).
-    Returns (allowed, faction_restriction).
-    - Faction leaders -> only their own faction
-    - Faction overseers -> only their assigned faction
-    - General faction council -> any faction (None means no restriction)
-    """
     member_role_ids = {r.id for r in member.roles}
 
-    # General faction council — no restriction
-    if FACTION_COUNCIL_GLOBAL in member_role_ids:
+    if FACTION_COUNCIL_GLOBAL in member_role_ids or (member_role_ids & FIRE_ALLOWED_ROLES):
         return True, None
 
-    # Faction-specific overseer — restricted to their faction
     overseer_faction = get_council_faction(member)
     if overseer_faction:
         return True, overseer_faction
 
-    # Faction leader — restricted to their faction
     leader_faction = get_leader_faction(member)
     if leader_faction:
         return True, leader_faction
 
     return False, None
 
-# Keep this as an alias so blacklist.py doesn't break
 def can_use_blacklist(member: discord.Member) -> tuple[bool, Optional[str]]:
     return can_use_faction_commands(member)
 
@@ -171,8 +185,18 @@ def has_fire_permission(member: discord.Member) -> bool:
     member_role_ids = {r.id for r in member.roles}
     return bool(member_role_ids & FIRE_ALLOWED_ROLES)
 
+def can_review_inactivity(member: discord.Member) -> bool:
+    member_role_ids = {r.id for r in member.roles}
+    return bool(member_role_ids & INACTIVITY_REVIEWER_ROLES)
+
 def is_staff(member: discord.Member) -> bool:
-    return get_member_rank_index(member) >= 0
+    member_role_ids = {r.id for r in member.roles}
+    return (
+        get_member_rank_index(member) >= 0
+        or ROLE_STAFF_TEAM in member_role_ids
+        or ROLE_ADMIN_TEAM in member_role_ids
+        or bool(member_role_ids & FIRE_ALLOWED_ROLES)
+    )
 
 def fmt_duration(seconds: int) -> str:
     if seconds < 60:
