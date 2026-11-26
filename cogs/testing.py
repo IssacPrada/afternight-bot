@@ -9,6 +9,10 @@ from discord import app_commands
 from discord.ext import commands
 from constants import (
     FEEDBACK_CHANNEL_ID as CONST_FEEDBACK_CHANNEL_ID,
+    ROLE_CM,
+    ROLE_CO_OWNER,
+    ROLE_DEVELOPER,
+    ROLE_OWNER,
     ROLE_TESTER,
 )
 from utils.roblox import fetch_roblox_user
@@ -21,9 +25,11 @@ GAME_TESTER_ROLE_ID = ROLE_TESTER or 1575227735914061924
 LEGACIES_GROUP_ID = 1024076883
 TESTER_RANK = 40
 
-ALLOWED_ROLES: set[int] = {
-    1458303507659624683,  # Programmer
-    1387649282139754587,  # Creators
+SESSION_ALLOWED_ROLES: set[int] = {
+    ROLE_OWNER,      # [O] Owner.
+    ROLE_CO_OWNER,   # [Co-O] Co-Owner.
+    ROLE_DEVELOPER,  # [D] Developer.
+    ROLE_CM,         # [CM] Community Manager.
 }
 
 GAME_LINK = "https://www.roblox.com/games/92315559992414/Afternight-Legacies-TESTING"
@@ -200,11 +206,11 @@ class TestingCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         actor = interaction.user
-        actor_role_ids = {r.id for r in actor.roles}
+        actor_role_ids = {r.id for r in actor.roles} if isinstance(actor, discord.Member) else set()
 
-        if not actor_role_ids & ALLOWED_ROLES:
+        if not actor_role_ids & SESSION_ALLOWED_ROLES:
             return await interaction.followup.send(
-                "❌ Only Programmers or Creators may use `/testingsession`.",
+                "❌ Only Owner, Co-Owner, Developers, or Community Managers may use `/testingsession`.",
                 ephemeral=True
             )
 
