@@ -8,8 +8,8 @@ from discord.ext import commands
 from constants import (
     FACTION_STRIKE_LOG_CHANNEL_ID,
     MOD_LOG_CHANNEL_ID,
-    can_use_faction_strike,
-    has_fire_permission,
+    can_manage_faction_strikes,
+    can_manage_staff_strikes,
 )
 
 
@@ -51,9 +51,9 @@ class StrikesCog(commands.Cog):
         actor = interaction.user
         guild = interaction.guild
 
-        if not isinstance(actor, discord.Member) or not guild or not can_use_faction_strike(actor):
+        if not isinstance(actor, discord.Member) or not guild or not can_manage_faction_strikes(actor):
             return await interaction.followup.send(
-                "❌ You do not have permission to issue faction strikes.",
+                "❌ Only Owner, Co-Owner, Community Manager, Faction Leaders, or Faction Overseers may manage faction strikes.",
                 ephemeral=True
             )
 
@@ -105,10 +105,12 @@ class StrikesCog(commands.Cog):
     async def viewstrike(self, interaction: discord.Interaction, user: discord.Member):
         await interaction.response.defer(ephemeral=True)
 
+        actor = interaction.user
         guild = interaction.guild
-        if not guild:
+
+        if not isinstance(actor, discord.Member) or not guild or not can_manage_faction_strikes(actor):
             return await interaction.followup.send(
-                "❌ This command can only be used inside a server.",
+                "❌ Only Owner, Co-Owner, Community Manager, Faction Leaders, or Faction Overseers may view faction strikes.",
                 ephemeral=True
             )
 
@@ -146,9 +148,9 @@ class StrikesCog(commands.Cog):
         actor = interaction.user
         guild = interaction.guild
 
-        if not isinstance(actor, discord.Member) or not guild or not can_use_faction_strike(actor):
+        if not isinstance(actor, discord.Member) or not guild or not can_manage_faction_strikes(actor):
             return await interaction.followup.send(
-                "❌ You do not have permission to clear faction strikes.",
+                "❌ Only Owner, Co-Owner, Community Manager, Faction Leaders, or Faction Overseers may clear faction strikes.",
                 ephemeral=True
             )
 
@@ -190,9 +192,9 @@ class StrikesCog(commands.Cog):
         actor = interaction.user
         guild = interaction.guild
 
-        if not isinstance(actor, discord.Member) or not guild or not has_fire_permission(actor):
+        if not isinstance(actor, discord.Member) or not guild or not can_manage_staff_strikes(actor):
             return await interaction.followup.send(
-                "❌ You do not have permission to issue staff strikes.",
+                "❌ Only Owner, Co-Owner, Community Manager, and Staff OverHead may manage staff strikes.",
                 ephemeral=True
             )
 
@@ -244,10 +246,12 @@ class StrikesCog(commands.Cog):
     async def viewstaffstrikes(self, interaction: discord.Interaction, user: discord.Member):
         await interaction.response.defer(ephemeral=True)
 
+        actor = interaction.user
         guild = interaction.guild
-        if not guild:
+
+        if not isinstance(actor, discord.Member) or not guild or not can_manage_staff_strikes(actor):
             return await interaction.followup.send(
-                "❌ This command can only be used inside a server.",
+                "❌ Only Owner, Co-Owner, Community Manager, and Staff OverHead may view staff strikes.",
                 ephemeral=True
             )
 
@@ -285,9 +289,9 @@ class StrikesCog(commands.Cog):
         actor = interaction.user
         guild = interaction.guild
 
-        if not isinstance(actor, discord.Member) or not guild or not has_fire_permission(actor):
+        if not isinstance(actor, discord.Member) or not guild or not can_manage_staff_strikes(actor):
             return await interaction.followup.send(
-                "❌ You do not have permission to clear staff strikes.",
+                "❌ Only Owner, Co-Owner, Community Manager, and Staff OverHead may clear staff strikes.",
                 ephemeral=True
             )
 
