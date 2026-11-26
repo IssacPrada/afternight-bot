@@ -42,21 +42,25 @@ ROLE_MEMBER = 1575231657638764766         # [M] Member.
 ROLE_STAFF_TEAM = ROLE_STAFF
 ROLE_ADMIN_TEAM = ROLE_ADMIN_GENERIC
 
+# Promotable ranks only, ordered LOWEST -> HIGHEST.
+# /promote and /demote move a member one index up or down this list.
+# The generic "Admin" and "Staff" team tags are NOT ranks, so they are not in here
+# (they are handled via ROLE_ADMIN_TEAM / ROLE_STAFF_TEAM and STAFF_TEAM_TAGS).
 STAFF_HIERARCHY: list[int] = [
-    ROLE_OWNER,
-    ROLE_CO_OWNER,
-    ROLE_CM,
-    ROLE_SOH,
-    ROLE_SA,
-    ROLE_ADMIN,
-    ROLE_ADMIN_GENERIC,
-    ROLE_HM,
-    ROLE_SM,
-    ROLE_JM,
-    ROLE_MOD,
-    ROLE_STAFF,
-    ROLE_TM,
+    ROLE_TM,          # 0
+    ROLE_MOD,         # 1
+    ROLE_JM,          # 2
+    ROLE_SM,          # 3
+    ROLE_HM,          # 4
+    ROLE_ADMIN,       # 5  <- Administrative Team starts here
+    ROLE_SA,          # 6
+    ROLE_SOH,         # 7
+    ROLE_CM,          # 8
+    ROLE_CO_OWNER,    # 9
+    ROLE_OWNER,       # 10
 ]
+
+STAFF_TEAM_TAGS: set[int] = {ROLE_STAFF, ROLE_ADMIN_GENERIC}
 
 STAFF_HIERARCHY_NAMES: dict[int, str] = {
     ROLE_OWNER: "[O] Owner.",
@@ -147,6 +151,8 @@ FACTION_LEADER_ROLES: set[int] = {
 }
 
 FACTION_LEADERS: set[int] = FACTION_LEADER_ROLES
+FACTION_MEMBER_MAIN_ROLE: int = ROLE_FACTION_MEMBER
+FACTION_GUIDE_ROLE: int = ROLE_FACTION_GUIDE
 FACTION_LEADER_MAIN_ROLE: int = ROLE_FL_GENERIC
 
 FACTION_OVERSEER_ROLES: set[int] = {
@@ -167,6 +173,11 @@ ROLE_TO_MANAGED_FACTION: dict[int, str] = {
     ROLE_SVL: "SilverVenom",
     ROLE_SVO: "SilverVenom",
 }
+
+# Faction name -> Roblox group rank number, used by `/massrank roblox faction:`.
+# TODO: fill in your real rank numbers, e.g. {"Sanguis Order": 10, ...}
+# Left empty on purpose so /massrank asks for an explicit rank instead of guessing.
+FACTION_ROBLOX_RANKS: dict[str, int] = {}
 
 # ── Permission Role Groups ────────────────────────────────────────────────────
 TOP_FACTION_MGMT_ROLES: set[int] = {
@@ -199,7 +210,23 @@ def _role_ids(member: discord.abc.User | discord.Member) -> set[int]:
 
 
 def is_staff(member: discord.abc.User | discord.Member) -> bool:
-    return bool(_role_ids(member) & (set(STAFF_HIERARCHY) | FIRE_ALLOWED_ROLES | {ROLE_DEVELOPER}))
+    return bool(
+        _role_ids(member)
+        & (set(STAFF_HIERARCHY) | STAFF_TEAM_TAGS | FIRE_ALLOWED_ROLES | {ROLE_DEVELOPER})
+    )
+
+
+def get_member_rank_index(member: discord.abc.User | discord.Member) -> int:
+    """Index of the member's HIGHEST rank in STAFF_HIERARCHY, or -1 if they hold none."""
+    role_ids = _role_ids(member)
+    for idx in range(len(STAFF_HIERARCHY) - 1, -1, -1):
+        if STAFF_HIERARCHY[idx] in role_ids:
+            return idx
+    return -1
+
+
+def has_faction_role(member: discord.abc.User | discord.Member) -> bool:
+    return bool(_role_ids(member) & ALL_FACTION_ROLES)
 
 
 def get_member_faction(member: discord.abc.User | discord.Member) -> str | None:
@@ -270,8 +297,9 @@ def can_use_faction_commands(member: discord.abc.User | discord.Member) -> tuple
     return False, None
 
 
-def can_use_blacklist(member: discord.abc.User | discord.Member) -> bool:
-    return bool(_role_ids(member) & (TOP_FACTION_MGMT_ROLES | FACTION_LEADER_ROLES | FACTION_OVERSEER_ROLES))
+def can_use_blacklist(member: discord.abc.User | discord.Member) -> tuple[bool, str | None]:
+    """Returns (allowed, scoped_faction) - same rules as faction commands."""
+    return can_use_faction_commands(member)
 
 
 def has_fire_permission(member: discord.abc.User | discord.Member) -> bool:
@@ -280,6 +308,3 @@ def has_fire_permission(member: discord.abc.User | discord.Member) -> bool:
 
 def can_review_inactivity(member: discord.abc.User | discord.Member) -> bool:
     return bool(_role_ids(member) & SENIOR_STAFF_ROLES)
-```[cite: 2]
-
-To also clear the `cogs.activity` import error (`get_player_playtime` in `utils/roblox.py`), paste `utils/roblox.py` (or `cogs/activity.py`) and I'll match them up for you.
