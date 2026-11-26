@@ -36,6 +36,7 @@ COGS = [
     "cogs.moderation",
     "cogs.automod",
     "cogs.purge",
+    "cogs.steal",
     "cogs.help",
 ]
 
