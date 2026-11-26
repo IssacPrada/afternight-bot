@@ -4,7 +4,6 @@ cogs/help.py — /help slash command only
 import discord
 from discord import app_commands
 from discord.ext import commands
-import datetime
 
 
 class HelpCog(commands.Cog):
