@@ -7,9 +7,8 @@ from typing import Optional
 # ─── Channels ─────────────────────────────────────────────────────────────────
 RESIGN_LOG_CHANNEL_ID        = 1575223632408350760
 INACTIVITY_REVIEW_CHANNEL_ID   = 1575292981739524137
-INACTIVITY_APPROVED_CHANNEL_ID = 1575292981739524137
+INACTIVITY_APPROVED_CHANNEL_ID = 1575223603593617530
 BLACKLIST_CHANNEL_ID           = 1575292981739524137  # Update if you have a dedicated blacklist channel ID
-
 # ─── Core / Leadership Roles ──────────────────────────────────────────────────
 ROLE_MEMBER       = 1575231657638764766  # [M] Member.
 ROLE_HONORED      = 1575229161176567828  # [HMB] Honored Member.
