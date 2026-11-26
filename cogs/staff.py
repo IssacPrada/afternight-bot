@@ -1,17 +1,19 @@
 """
 cogs/staff.py — /promote, /demote, /fire slash commands
 """
+import datetime
 import discord
 from discord import app_commands
 from discord.ext import commands
 from constants import (
-    STAFF_HIERARCHY, STAFF_HIERARCHY_NAMES,
-    ROLE_STAFF_TEAM, ROLE_ADMIN_TEAM,
-    FIRE_ALLOWED_ROLES,
-    get_member_rank_index, has_fire_permission, is_staff
+    MOD_LOG_CHANNEL_ID,
+    ROLE_ADMIN_TEAM,
+    ROLE_STAFF_TEAM,
+    STAFF_HIERARCHY,
+    STAFF_HIERARCHY_NAMES,
+    get_member_rank_index,
+    has_fire_permission,
 )
-import datetime
-
 
 ADMIN_TIER_START = 4  # index of Administrator in STAFF_HIERARCHY
 
@@ -22,9 +24,14 @@ class StaffCog(commands.Cog):
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
-    def _make_log_embed(self, action: str, actor: discord.Member,
-                        target: discord.Member, color: discord.Color,
-                        extra: str = "") -> discord.Embed:
+    def _make_log_embed(
+        self,
+        action: str,
+        actor: discord.Member,
+        target: discord.Member,
+        color: discord.Color,
+        extra: str = ""
+    ) -> discord.Embed:
         embed = discord.Embed(
             title=f"📋 Staff Action — {action}",
             color=color,
@@ -36,6 +43,13 @@ class StaffCog(commands.Cog):
             embed.add_field(name="Details", value=extra, inline=False)
         embed.set_footer(text=f"Target ID: {target.id}")
         return embed
+
+    async def _post_log(self, guild: discord.Guild, embed: discord.Embed):
+        channel = guild.get_channel(MOD_LOG_CHANNEL_ID)
+        if channel:
+            await channel.send(embed=embed)
+        else:
+            await self.bot.log_action(embed)
 
     async def _update_admin_team_role(self, member: discord.Member, new_rank_index: int):
         """Add or remove the Administrative Team role based on new rank."""
@@ -59,7 +73,7 @@ class StaffCog(commands.Cog):
 
         actor = interaction.user
 
-        if not has_fire_permission(actor):
+        if not isinstance(actor, discord.Member) or not has_fire_permission(actor):
             return await interaction.followup.send(
                 "❌ You do not have permission to use this command.\n"
                 "Required: Overseer of Staff, Community Manager, or Creators.",
@@ -70,7 +84,8 @@ class StaffCog(commands.Cog):
 
         if target_rank == -1:
             return await interaction.followup.send(
-                f"❌ {user.mention} does not hold a staff rank.", ephemeral=True
+                f"❌ {user.mention} does not hold a staff rank.",
+                ephemeral=True
             )
         if target_rank >= len(STAFF_HIERARCHY) - 1:
             return await interaction.followup.send(
@@ -85,7 +100,8 @@ class StaffCog(commands.Cog):
         if not new_role:
             return await interaction.followup.send("❌ Target role not found in this server.", ephemeral=True)
 
-        await user.remove_roles(old_role, reason=f"Promoted by {actor}")
+        if old_role and old_role in user.roles:
+            await user.remove_roles(old_role, reason=f"Promoted by {actor}")
         await user.add_roles(new_role, reason=f"Promoted by {actor}")
         await self._update_admin_team_role(user, target_rank + 1)
 
@@ -101,7 +117,7 @@ class StaffCog(commands.Cog):
             "Promotion", actor, user, discord.Color.green(),
             f"{old_name} → **{new_name}**"
         )
-        await self.bot.log_action(embed)
+        await self._post_log(guild, embed)
 
         success_embed = discord.Embed(
             title="✅ Promotion Successful",
@@ -130,7 +146,7 @@ class StaffCog(commands.Cog):
 
         actor = interaction.user
 
-        if not has_fire_permission(actor):
+        if not isinstance(actor, discord.Member) or not has_fire_permission(actor):
             return await interaction.followup.send(
                 "❌ You do not have permission to use this command.\n"
                 "Required: Overseer of Staff, Community Manager, or Creators.",
@@ -141,7 +157,8 @@ class StaffCog(commands.Cog):
 
         if target_rank == -1:
             return await interaction.followup.send(
-                f"❌ {user.mention} does not hold a staff rank.", ephemeral=True
+                f"❌ {user.mention} does not hold a staff rank.",
+                ephemeral=True
             )
         if target_rank == 0:
             return await interaction.followup.send(
@@ -156,7 +173,8 @@ class StaffCog(commands.Cog):
         if not new_role:
             return await interaction.followup.send("❌ Target role not found in this server.", ephemeral=True)
 
-        await user.remove_roles(old_role, reason=f"Demoted by {actor}")
+        if old_role and old_role in user.roles:
+            await user.remove_roles(old_role, reason=f"Demoted by {actor}")
         await user.add_roles(new_role, reason=f"Demoted by {actor}")
         await self._update_admin_team_role(user, target_rank - 1)
 
@@ -172,7 +190,7 @@ class StaffCog(commands.Cog):
             "Demotion", actor, user, discord.Color.orange(),
             f"{old_name} → **{new_name}**"
         )
-        await self.bot.log_action(embed)
+        await self._post_log(guild, embed)
 
         success_embed = discord.Embed(
             title="⬇️ Demotion Applied",
@@ -196,12 +214,16 @@ class StaffCog(commands.Cog):
 
     @app_commands.command(name="fire", description="Remove all staff roles from a user.")
     @app_commands.describe(user="The staff member to fire", reason="Reason for firing")
-    async def fire(self, interaction: discord.Interaction,
-                   user: discord.Member, reason: str = "No reason provided."):
+    async def fire(
+        self,
+        interaction: discord.Interaction,
+        user: discord.Member,
+        reason: str = "No reason provided."
+    ):
         await interaction.response.defer(ephemeral=True)
 
         actor = interaction.user
-        if not has_fire_permission(actor):
+        if not isinstance(actor, discord.Member) or not has_fire_permission(actor):
             return await interaction.followup.send(
                 "❌ You do not have permission to use `/fire`.\n"
                 "Required: Overseer of Staff, Community Manager, or Creators.",
@@ -218,12 +240,13 @@ class StaffCog(commands.Cog):
 
         for rid in [ROLE_STAFF_TEAM, ROLE_ADMIN_TEAM]:
             role = guild.get_role(rid)
-            if role and role in user.roles:
+            if role and role in user.roles and role not in roles_to_remove:
                 roles_to_remove.append(role)
 
         if not roles_to_remove:
             return await interaction.followup.send(
-                f"❌ {user.mention} does not have any staff roles.", ephemeral=True
+                f"❌ {user.mention} does not have any staff roles.",
+                ephemeral=True
             )
 
         await user.remove_roles(*roles_to_remove, reason=f"Fired by {actor}: {reason}")
@@ -235,7 +258,7 @@ class StaffCog(commands.Cog):
         embed = self._make_log_embed(
             "Fired", actor, user, discord.Color.red(), f"Reason: {reason}"
         )
-        await self.bot.log_action(embed)
+        await self._post_log(guild, embed)
 
         success_embed = discord.Embed(
             title="🔥 Staff Member Fired",
