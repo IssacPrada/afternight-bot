@@ -1,230 +1,198 @@
 """
-cogs/automod.py — Auto moderation for slurs
+cogs/automod.py — Automated moderation (invite/link filter, spam/rate detection, and auto-timeout/log)
 """
+import collections
+import datetime
+import re
+from typing import Optional
 import discord
 from discord import app_commands
 from discord.ext import commands
-import datetime
-import json
-import os
+from constants import (
+    AUTOMOD_LOG_CHANNEL_ID,
+    is_staff,
+)
 
-# ── Config ────────────────────────────────────────────────────────────────────
-AUTOMOD_LOG_CHANNEL = 1537657791748247673
-SLURS_FILE          = "data/slurs.json"
-
-IMMUNE_ROLES: set[int] = {
-    1387649282139754587,  # [C] Creators
-}
-
-ALLOWED_TO_MANAGE: set[int] = {
-    1458302857764802683,  # Community Manager
-    1458302854887510210,  # Overseer of Staff
-    1387649282139754587,  # [C] Creators
-}
-
-APPEAL_SERVER = "https://discord.gg/dQAbatSEcw"
-
-
-def load_slurs() -> list[str]:
-    try:
-        if not os.path.exists(SLURS_FILE):
-            return []
-        with open(SLURS_FILE, "r") as f:
-            return json.load(f)
-    except Exception:
-        return []
-
-
-def save_slurs(slurs: list[str]):
-    try:
-        os.makedirs(os.path.dirname(SLURS_FILE), exist_ok=True)
-        with open(SLURS_FILE, "w") as f:
-            json.dump(slurs, f)
-    except Exception:
-        pass
-
-
-def contains_slur(content: str, slurs: list[str]) -> bool:
-    content_lower = content.lower()
-    for slur in slurs:
-        if slur.lower() in content_lower:
-            return True
-    return False
+INVITE_REGEX = re.compile(
+    r"(?:https?://)?(?:www\.)?(?:discord\.gg|discordapp\.com/invite|discord\.com/invite)/[A-Za-z0-9-]+",
+    re.IGNORECASE
+)
+URL_REGEX = re.compile(r"https?://\S+", re.IGNORECASE)
 
 
 class AutoModCog(commands.Cog):
     def __init__(self, bot):
-        self.bot   = bot
-        self.slurs = load_slurs()
+        self.bot = bot
+        self.enabled = True
+        self.block_invites = True
+        self.block_links = False
+        self.spam_threshold = 6        # messages within window
+        self.spam_window_seconds = 5
+        self._recent_messages: dict[tuple[int, int], collections.deque[float]] = collections.defaultdict(
+            lambda: collections.deque(maxlen=25)
+        )
 
-    # ── Message listener ──────────────────────────────────────────────────────
+    async def _post_automod_log(self, guild: discord.Guild, embed: discord.Embed):
+        channel = guild.get_channel(AUTOMOD_LOG_CHANNEL_ID)
+        if channel:
+            await channel.send(embed=embed)
+        else:
+            await self.bot.log_action(embed)
+
+    def _is_exempt(self, member: discord.abc.User | discord.Member) -> bool:
+        if member.bot:
+            return True
+        if isinstance(member, discord.Member):
+            if member.guild_permissions.administrator or member.guild_permissions.manage_messages:
+                return True
+            if is_staff(member):
+                return True
+        return False
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        if message.author.bot:
-            return
-        if not message.guild:
+        if not self.enabled or not message.guild or self._is_exempt(message.author):
             return
 
-        member_role_ids = {r.id for r in message.author.roles}
-        if member_role_ids & IMMUNE_ROLES:
+        member = message.author
+        content = message.content or ""
+        trigger_reason: Optional[str] = None
+        should_timeout = False
+
+        # 1. Discord invite check
+        if self.block_invites and INVITE_REGEX.search(content):
+            trigger_reason = "Unauthorized Discord invite link"
+
+        # 2. General link check (if enabled)
+        if not trigger_reason and self.block_links and URL_REGEX.search(content):
+            trigger_reason = "Unauthorized external link"
+
+        # 3. Burst spam check
+        if not trigger_reason and self.spam_threshold > 0:
+            now_ts = datetime.datetime.utcnow().timestamp()
+            bucket = self._recent_messages[(message.guild.id, member.id)]
+            bucket.append(now_ts)
+            recent_count = sum(1 for ts in bucket if (now_ts - ts) <= self.spam_window_seconds)
+            if recent_count >= self.spam_threshold:
+                bucket.clear()
+                trigger_reason = f"Message spam ({recent_count} messages in {self.spam_window_seconds}s)"
+                should_timeout = True
+
+        if not trigger_reason:
             return
 
-        if not self.slurs:
-            return
-
-        if not contains_slur(message.content, self.slurs):
-            return
-
-        # ── Delete message ────────────────────────────────────────────────────
         try:
             await message.delete()
-        except discord.Forbidden:
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
             pass
 
-        # ── Auto warn ─────────────────────────────────────────────────────────
-        guild = message.guild
-        try:
-            await self.bot.db.add_warn(
-                str(message.author.id),
-                str(guild.id),
-                "Slur usage",
-                f"Auto-detected slur in #{message.channel.name}",
-                str(self.bot.user.id)
-            )
-            warns      = await self.bot.db.get_warns(str(message.author.id), str(guild.id))
-            warn_count = len(warns)
-        except Exception:
-            warn_count = 1
+        timeout_status = "No timeout"
+        if should_timeout and isinstance(member, discord.Member):
+            try:
+                until = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=10)
+                await member.timeout(until, reason=f"AutoMod: {trigger_reason}")
+                timeout_status = "Timed out for 10 minutes"
+            except discord.Forbidden:
+                timeout_status = "Missing timeout permissions"
+            except discord.HTTPException:
+                timeout_status = "Failed to apply timeout"
 
-        # ── Warn message in channel ───────────────────────────────────────────
         try:
-            await message.channel.send(
-                f"{message.author.mention} you have been warned for slur usage.",
-                delete_after=10
+            await member.send(
+                f"🛡️ Your message in **{message.guild.name}** was removed by AutoMod.\n"
+                f"**Reason:** {trigger_reason}\n"
+                f"**Action:** {timeout_status}"
             )
         except discord.Forbidden:
             pass
 
-        # ── DM the user ───────────────────────────────────────────────────────
-        try:
-            dm = discord.Embed(
-                title="⚠️ You Have Been Warned",
-                color=discord.Color.yellow(),
-                timestamp=discord.utils.utcnow()
-            )
-            dm.description = (
-                f"You have been warned in **Afternight Legacies** for **slur usage**.\n\n"
-                f"**Warning Count:** {warn_count}\n\n"
-                f"If you believe this was a mistake, open a ticket:\n{APPEAL_SERVER}"
-            )
-            dm.set_footer(text="Afternight Auto Moderation")
-            await message.author.send(embed=dm)
-        except discord.Forbidden:
-            pass
-
-        # ── Log ───────────────────────────────────────────────────────────────
-        log_channel = guild.get_channel(AUTOMOD_LOG_CHANNEL)
-        if log_channel:
-            log_embed = discord.Embed(
-                title="🤖 AutoMod — Slur Detected",
-                color=discord.Color.red(),
-                timestamp=discord.utils.utcnow()
-            )
-            log_embed.set_thumbnail(url=message.author.display_avatar.url)
-            log_embed.add_field(
-                name="User",
-                value=f"{message.author.mention} (`{message.author.id}`)",
-                inline=True
-            )
-            log_embed.add_field(name="Channel",       value=message.channel.mention, inline=True)
-            log_embed.add_field(name="Warning Count", value=f"{warn_count}",         inline=True)
-            log_embed.add_field(name="Action",        value="Message deleted + Auto warned", inline=False)
-            log_embed.set_footer(text=f"User ID: {message.author.id}")
-            await log_channel.send(embed=log_embed)
-
-    # ── /addslur ──────────────────────────────────────────────────────────────
-
-    @app_commands.command(name="addslur", description="Add a word to the automod slur list.")
-    @app_commands.describe(word="The word to add")
-    async def addslur(self, interaction: discord.Interaction, word: str):
-        await interaction.response.defer(ephemeral=True)
-
-        if not {r.id for r in interaction.user.roles} & ALLOWED_TO_MANAGE:
-            return await interaction.followup.send(
-                "❌ Only Community Manager, Overseer of Staff, or Creators may manage the slur list.",
-                ephemeral=True
-            )
-
-        word = word.lower().strip()
-        if word in self.slurs:
-            return await interaction.followup.send(
-                f"❌ `{word}` is already in the slur list.", ephemeral=True
-            )
-
-        self.slurs.append(word)
-        save_slurs(self.slurs)
-
-        await interaction.followup.send(
-            f"✅ Added `{word}` to the automod slur list. Total: **{len(self.slurs)}** word(s).",
-            ephemeral=True
+        log_embed = discord.Embed(
+            title="🛡️ AutoMod Action Triggered",
+            color=discord.Color.red(),
+            timestamp=datetime.datetime.utcnow()
         )
+        log_embed.add_field(name="User", value=f"{member.mention} (`{member.id}`)", inline=True)
+        log_embed.add_field(name="Channel", value=message.channel.mention, inline=True)
+        log_embed.add_field(name="Action", value=f"Deleted message · {timeout_status}", inline=True)
+        log_embed.add_field(name="Reason", value=trigger_reason, inline=False)
+        if content:
+            log_embed.add_field(name="Content", value=content[:1024], inline=False)
+        await self._post_automod_log(message.guild, log_embed)
 
-    # ── /removeslur ───────────────────────────────────────────────────────────
+    automod_group = app_commands.Group(
+        name="automod",
+        description="Configure automated moderation settings."
+    )
 
-    @app_commands.command(name="removeslur", description="Remove a word from the automod slur list.")
-    @app_commands.describe(word="The word to remove")
-    async def removeslur(self, interaction: discord.Interaction, word: str):
-        await interaction.response.defer(ephemeral=True)
-
-        if not {r.id for r in interaction.user.roles} & ALLOWED_TO_MANAGE:
-            return await interaction.followup.send(
-                "❌ Only Community Manager, Overseer of Staff, or Creators may manage the slur list.",
+    @automod_group.command(name="status", description="View current AutoMod configuration.")
+    async def status(self, interaction: discord.Interaction):
+        if not isinstance(interaction.user, discord.Member) or not (
+            interaction.user.guild_permissions.manage_guild or is_staff(interaction.user)
+        ):
+            return await interaction.response.send_message(
+                "❌ You don't have permission to view AutoMod settings.",
                 ephemeral=True
-            )
-
-        word = word.lower().strip()
-        if word not in self.slurs:
-            return await interaction.followup.send(
-                f"❌ `{word}` is not in the slur list.", ephemeral=True
-            )
-
-        self.slurs.remove(word)
-        save_slurs(self.slurs)
-
-        await interaction.followup.send(
-            f"✅ Removed `{word}` from the automod slur list. Total: **{len(self.slurs)}** word(s).",
-            ephemeral=True
-        )
-
-    # ── /viewslurs ────────────────────────────────────────────────────────────
-
-    @app_commands.command(name="viewslurs", description="View all words in the automod slur list.")
-    async def viewslurs(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-
-        if not {r.id for r in interaction.user.roles} & ALLOWED_TO_MANAGE:
-            return await interaction.followup.send(
-                "❌ Only Community Manager, Overseer of Staff, or Creators may view the slur list.",
-                ephemeral=True
-            )
-
-        # ── Reload from file in case another instance updated it ──────────────
-        self.slurs = load_slurs()
-
-        if not self.slurs:
-            return await interaction.followup.send(
-                "The slur list is currently empty.", ephemeral=True
             )
 
         embed = discord.Embed(
-            title="🤖 AutoMod Slur List",
-            description="\n".join(f"`{s}`" for s in self.slurs),
-            color=discord.Color.red(),
-            timestamp=discord.utils.utcnow()
+            title="🛡️ AutoMod Status",
+            color=discord.Color.blurple(),
+            timestamp=datetime.datetime.utcnow()
         )
-        embed.set_footer(text=f"Total: {len(self.slurs)} word(s)")
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        embed.add_field(name="Enabled", value="✅ Yes" if self.enabled else "❌ No", inline=True)
+        embed.add_field(name="Block Invites", value="✅ Yes" if self.block_invites else "❌ No", inline=True)
+        embed.add_field(name="Block Links", value="✅ Yes" if self.block_links else "❌ No", inline=True)
+        embed.add_field(
+            name="Spam Limit",
+            value=f"{self.spam_threshold} msgs / {self.spam_window_seconds}s",
+            inline=True
+        )
+        embed.add_field(name="Log Channel", value=f"<#{AUTOMOD_LOG_CHANNEL_ID}>", inline=True)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @automod_group.command(name="toggle", description="Enable or disable AutoMod or specific filters.")
+    @app_commands.describe(
+        feature="Which feature to toggle (all, invites, links)",
+        enabled="Whether to enable or disable it"
+    )
+    @app_commands.choices(feature=[
+        app_commands.Choice(name="All AutoMod", value="all"),
+        app_commands.Choice(name="Discord Invites", value="invites"),
+        app_commands.Choice(name="External Links", value="links"),
+    ])
+    async def toggle(self, interaction: discord.Interaction, feature: str, enabled: bool):
+        if not isinstance(interaction.user, discord.Member) or not (
+            interaction.user.guild_permissions.manage_guild or is_staff(interaction.user)
+        ):
+            return await interaction.response.send_message(
+                "❌ You don't have permission to change AutoMod settings.",
+                ephemeral=True
+            )
+
+        if feature == "all":
+            self.enabled = enabled
+            label = "AutoMod"
+        elif feature == "invites":
+            self.block_invites = enabled
+            label = "Invite Filter"
+        else:
+            self.block_links = enabled
+            label = "Link Filter"
+
+        log_embed = discord.Embed(
+            title="🛡️ AutoMod Setting Updated",
+            color=discord.Color.gold(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        log_embed.add_field(name="Setting", value=label, inline=True)
+        log_embed.add_field(name="State", value="Enabled" if enabled else "Disabled", inline=True)
+        log_embed.add_field(name="Updated By", value=f"{interaction.user.mention}", inline=True)
+        await self._post_automod_log(interaction.guild, log_embed)
+
+        await interaction.response.send_message(
+            f"✅ **{label}** is now **{'enabled' if enabled else 'disabled'}**.",
+            ephemeral=True
+        )
 
 
 async def setup(bot):
