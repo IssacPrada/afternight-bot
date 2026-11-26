@@ -263,6 +263,3 @@ def can_use_blacklist(member: discord.abc.User | discord.Member) -> bool:
 
 def has_fire_permission(member: discord.abc.User | discord.Member) -> bool:
     return bool(_role_ids(member) & FIRE_ALLOWED_ROLES)
-```[cite: 2]
-
-Ready to test this setup, or do you want to go over any remaining cogs next?
