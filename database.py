@@ -5,6 +5,7 @@ import asyncpg
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+
 class Database:
     def __init__(self):
         self.pool = None
@@ -96,22 +97,21 @@ class Database:
                 );
 
                 CREATE TABLE IF NOT EXISTS inactivity_notices (
-    id                 SERIAL PRIMARY KEY,
-    user_id            TEXT      NOT NULL,
-    guild_id           TEXT      NOT NULL,
-    original_nick      TEXT,
-    previous_nick      TEXT,
-    date_start         TEXT      NOT NULL,
-    date_end           TEXT      NOT NULL,
-    end_date_dt        TIMESTAMP NOT NULL,
-    reason             TEXT      NOT NULL,
-    status             TEXT      NOT NULL DEFAULT 'pending', -- pending | approved | denied | completed
-    reviewed_by        TEXT,
-    channel_id         TEXT,
-    message_id         TEXT,
-    created_at         TIMESTAMP NOT NULL DEFAULT NOW()
-);
-
+                    id                 SERIAL PRIMARY KEY,
+                    user_id            TEXT      NOT NULL,
+                    guild_id           TEXT      NOT NULL,
+                    original_nick      TEXT,
+                    previous_nick      TEXT,
+                    date_start         TEXT      NOT NULL,
+                    date_end           TEXT      NOT NULL,
+                    end_date_dt        TIMESTAMP NOT NULL,
+                    reason             TEXT      NOT NULL,
+                    status             TEXT      NOT NULL DEFAULT 'pending',
+                    reviewed_by        TEXT,
+                    channel_id         TEXT,
+                    message_id         TEXT,
+                    created_at         TIMESTAMP NOT NULL DEFAULT NOW()
+                );
             """)
 
     # ── Strikes ───────────────────────────────────────────────────────────────
@@ -323,7 +323,7 @@ class Database:
             )
             return int(result.split()[-1])
 
-# ── Inactivity Notices ────────────────────────────────────────────────────
+    # ── Inactivity Notices ────────────────────────────────────────────────────
 
     async def create_inactivity_notice(
         self, user_id: str, guild_id: str, original_nick: str,
@@ -400,4 +400,3 @@ class Database:
                 "UPDATE inactivity_notices SET status='completed' WHERE id=$1",
                 notice_id
             )
-
