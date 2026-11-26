@@ -11,7 +11,6 @@ from constants import (
     is_staff,
 )
 import datetime
-from dateutil import parser as date_parser
 
 IN_PREFIX = "[IN] "
 
@@ -28,13 +27,14 @@ def format_in_nickname(current_name: str) -> str:
 
 def parse_end_date(date_str: str) -> datetime.datetime:
     """Parse human-readable end date into a naive UTC datetime (end of day)."""
-    try:
-        dt = date_parser.parse(date_str)
-        if dt.tzinfo is not None:
-            dt = dt.astimezone(datetime.timezone.utc).replace(tzinfo=None)
-        return dt.replace(hour=23, minute=59, second=59)
-    except Exception:
-        return datetime.datetime.utcnow() + datetime.timedelta(days=7)
+    clean = date_str.strip().rstrip(".")
+    for fmt in ("%B %d, %Y", "%b %d, %Y", "%m %d, %Y", "%m/%d/%Y", "%Y-%m-%d"):
+        try:
+            dt = datetime.datetime.strptime(clean, fmt)
+            return dt.replace(hour=23, minute=59, second=59)
+        except ValueError:
+            continue
+    return datetime.datetime.utcnow() + datetime.timedelta(days=7)
 
 
 async def restore_member_nickname(guild: discord.Guild, notice: dict) -> str:
@@ -48,7 +48,7 @@ async def restore_member_nickname(guild: discord.Guild, notice: dict) -> str:
         await member.edit(nick=restore_to, reason="Inactivity ended — restored nickname")
         return f"Restored nickname to `{restore_to}`"
     except discord.Forbidden:
-        return "Missing permissions to change nickname (role hierarchy)"
+        return "Missing permissions to change nickname (check bot role position)"
     except Exception as e:
         return f"Could not restore nickname: {e}"
 
@@ -64,7 +64,6 @@ class InactivityView(discord.ui.View):
         embed = interaction.message.embeds[0] if interaction.message.embeds else None
         if not embed or not embed.footer or not embed.footer.text:
             return None
-        # Footer format: "Notice ID: 12"
         parts = embed.footer.text.split("Notice ID:")
         if len(parts) < 2:
             return None
