@@ -322,3 +322,82 @@ class Database:
                 user_id, guild_id
             )
             return int(result.split()[-1])
+
+# ── Inactivity Notices ────────────────────────────────────────────────────
+
+    async def create_inactivity_notice(
+        self, user_id: str, guild_id: str, original_nick: str,
+        date_start: str, date_end: str, end_date_dt: datetime.datetime,
+        reason: str
+    ) -> int:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "INSERT INTO inactivity_notices "
+                "(user_id, guild_id, original_nick, previous_nick, date_start, date_end, end_date_dt, reason) "
+                "VALUES ($1, $2, $3, $3, $4, $5, $6, $7) RETURNING id",
+                user_id, guild_id, original_nick, date_start, date_end, end_date_dt, reason
+            )
+            return row["id"]
+
+    async def set_inactivity_message(self, notice_id: int, channel_id: str, message_id: str):
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE inactivity_notices SET channel_id=$1, message_id=$2 WHERE id=$3",
+                channel_id, message_id, notice_id
+            )
+
+    async def get_inactivity_notice(self, notice_id: int) -> Optional[Dict]:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM inactivity_notices WHERE id=$1", notice_id
+            )
+            return dict(row) if row else None
+
+    async def get_pending_inactivity_notices(self) -> List[Dict]:
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM inactivity_notices WHERE status='pending' ORDER BY id ASC"
+            )
+            return [dict(r) for r in rows]
+
+    async def update_inactivity_status(
+        self, notice_id: int, status: str, reviewed_by: str = None,
+        previous_nick: str = None
+    ):
+        async with self.pool.acquire() as conn:
+            if previous_nick is not None:
+                await conn.execute(
+                    "UPDATE inactivity_notices SET status=$1, reviewed_by=$2, previous_nick=$3 WHERE id=$4",
+                    status, reviewed_by, previous_nick, notice_id
+                )
+            else:
+                await conn.execute(
+                    "UPDATE inactivity_notices SET status=$1, reviewed_by=$2 WHERE id=$3",
+                    status, reviewed_by, notice_id
+                )
+
+    async def get_active_inactivity_for_user(self, user_id: str, guild_id: str) -> Optional[Dict]:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM inactivity_notices "
+                "WHERE user_id=$1 AND guild_id=$2 AND status='approved' "
+                "ORDER BY id DESC LIMIT 1",
+                user_id, guild_id
+            )
+            return dict(row) if row else None
+
+    async def get_expired_inactivity_notices(self, now_utc: datetime.datetime) -> List[Dict]:
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM inactivity_notices WHERE status='approved' AND end_date_dt <= $1",
+                now_utc
+            )
+            return [dict(r) for r in rows]
+
+    async def complete_inactivity_notice(self, notice_id: int):
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE inactivity_notices SET status='completed' WHERE id=$1",
+                notice_id
+            )
+
