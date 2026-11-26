@@ -1,21 +1,25 @@
 """
 cogs/testing.py — Auto-rank to Tester + /testingsession command
 """
+import datetime
+import os
+import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
+from constants import (
+    FEEDBACK_CHANNEL_ID as CONST_FEEDBACK_CHANNEL_ID,
+    ROLE_TESTER,
+)
 from utils.roblox import fetch_roblox_user
-from utils.roblox_group import get_roblox_user_id, get_xcsrf_token, HEADERS
-import aiohttp
-import datetime
-import os
+from utils.roblox_group import get_xcsrf_token
 
 # ── Config ────────────────────────────────────────────────────────────────────
-TESTING_CHANNEL_ID    = 1458533750806937764
-FEEDBACK_CHANNEL_ID   = 1458533639095849010
-GAME_TESTER_ROLE_ID   = 1458302213368840458
-LEGACIES_GROUP_ID     = 1024076883
-TESTER_RANK           = 40
+TESTING_CHANNEL_ID = 1575319215643033690
+FEEDBACK_CHANNEL_ID = CONST_FEEDBACK_CHANNEL_ID or 1575319889755906159
+GAME_TESTER_ROLE_ID = ROLE_TESTER or 1575227735914061924
+LEGACIES_GROUP_ID = 1024076883
+TESTER_RANK = 40
 
 ALLOWED_ROLES: set[int] = {
     1458303507659624683,  # Programmer
@@ -23,7 +27,7 @@ ALLOWED_ROLES: set[int] = {
 }
 
 GAME_LINK = "https://www.roblox.com/games/92315559992414/Afternight-Legacies-TESTING"
-COOKIE    = os.getenv("ROBLOX_SECURITY_COOKIE")
+COOKIE = os.getenv("ROBLOX_SECURITY_COOKIE")
 
 HEADERS_LEGACIES = {
     "Cookie": f".ROBLOSECURITY={COOKIE}",
@@ -54,7 +58,6 @@ async def rank_to_tester(roblox_username: str) -> tuple[bool, str]:
     if not COOKIE:
         return False, "ROBLOX_SECURITY_COOKIE is not set."
 
-    # Get user ID
     async with aiohttp.ClientSession() as session:
         async with session.post(
             "https://users.roblox.com/v1/usernames/users",
@@ -69,12 +72,10 @@ async def rank_to_tester(roblox_username: str) -> tuple[bool, str]:
                 return False, f"Roblox user `{roblox_username}` does not exist."
             user_id = users[0]["id"]
 
-    # Get role ID for tester rank
     role_id = await get_legacies_role_id(TESTER_RANK)
     if not role_id:
         return False, "Could not find the Tester role in the Legacies group."
 
-    # Get XCSRF token
     try:
         token = await get_xcsrf_token()
         headers = {**HEADERS_LEGACIES, "x-csrf-token": token}
@@ -87,10 +88,9 @@ async def rank_to_tester(roblox_username: str) -> tuple[bool, str]:
             ) as resp:
                 if resp.status == 200:
                     return True, f"✅ `{roblox_username}` has been ranked to **Tester** in Afternight Legacies."
-                else:
-                    error = await resp.json()
-                    msg = error.get("errors", [{}])[0].get("message", "Unknown error")
-                    return False, f"❌ Roblox API error: {msg}"
+                error = await resp.json()
+                msg = error.get("errors", [{}])[0].get("message", "Unknown error")
+                return False, f"❌ Roblox API error: {msg}"
 
     except Exception as e:
         return False, f"❌ Exception: {str(e)}"
@@ -104,38 +104,35 @@ class TestingCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        if message.author.bot:
+        if message.author.bot or not message.guild:
             return
         if message.channel.id != TESTING_CHANNEL_ID:
             return
-        if message.channel.id != TESTING_CHANNEL_ID:
-            return
-
-        # DEBUG - remove after testing
-        print(f"[DEBUG] {message.author} roles: {[r.id for r in message.author.roles]}")
-        print(f"[DEBUG] Looking for role: {GAME_TESTER_ROLE_ID}")
-        print(f"[DEBUG] Tester role found: {message.guild.get_role(GAME_TESTER_ROLE_ID)}")
-
-        # ── Prevent duplicate ranking ─────────────────────────────────────────────
-        async for msg in message.channel.history(limit=100):
-            if msg.author == self.bot.user and msg.reference:
-                ref = msg.reference.resolved
-                if ref and ref.author == message.author and "Tester Rank Granted" in (
-                msg.embeds[0].title if msg.embeds else ""):
-                    await message.reply(
-                        "⚠️ You have already been ranked to Tester!",
-                        delete_after=10
-                    )
-                    return
 
         # ── Only Game Testers can use this channel ────────────────────────────
         tester_role = message.guild.get_role(GAME_TESTER_ROLE_ID)
-        if tester_role not in message.author.roles:
+        if not tester_role or tester_role not in message.author.roles:
             await message.reply(
                 "❌ Only Game Testers may submit their username here.",
                 delete_after=10
             )
             return
+
+        # ── Prevent duplicate ranking ─────────────────────────────────────────
+        async for msg in message.channel.history(limit=100):
+            if msg.author == self.bot.user and msg.reference:
+                ref = msg.reference.resolved
+                if (
+                    ref
+                    and ref.author == message.author
+                    and msg.embeds
+                    and "Tester Rank Granted" in (msg.embeds[0].title or "")
+                ):
+                    await message.reply(
+                        "⚠️ You have already been ranked to Tester!",
+                        delete_after=10
+                    )
+                    return
 
         roblox_username = message.content.strip()
 
@@ -147,7 +144,6 @@ class TestingCog(commands.Cog):
             )
             return
 
-        # Show typing indicator while we process
         async with message.channel.typing():
             roblox_data = await fetch_roblox_user(roblox_username)
             if not roblox_data:
@@ -166,29 +162,9 @@ class TestingCog(commands.Cog):
                 color=discord.Color.green(),
                 timestamp=datetime.datetime.utcnow()
             )
-            embed.set_thumbnail(url=roblox_data.get("avatar_url") or message.author.display_avatar.url)
-            embed.add_field(name="Discord", value=message.author.mention, inline=True)
-            embed.add_field(name="Roblox", value=f"`{roblox_username}`", inline=True)
-            embed.add_field(
-                name="Game Link",
-                value=f"[Click to join]({GAME_LINK})",
-                inline=False
+            embed.set_thumbnail(
+                url=roblox_data.get("avatar_url") or message.author.display_avatar.url
             )
-            embed.set_footer(text="Afternight Legacies Testing")
-            await message.reply(embed=embed)
-        else:
-            await message.reply(f"❌ Failed to rank: {result_msg}", delete_after=15)
-
-            # Rank them to tester
-            success, result_msg = await rank_to_tester(roblox_username)
-
-        if success:
-            embed = discord.Embed(
-                title="🎮 Tester Rank Granted!",
-                color=discord.Color.green(),
-                timestamp=datetime.datetime.utcnow()
-            )
-            embed.set_thumbnail(url=roblox_data.get("avatar_url") or message.author.display_avatar.url)
             embed.add_field(name="Discord", value=message.author.mention, inline=True)
             embed.add_field(name="Roblox", value=f"`{roblox_username}`", inline=True)
             embed.add_field(
@@ -213,11 +189,14 @@ class TestingCog(commands.Cog):
         time="Time of the session e.g. 5:00 PM EST",
         testing="What will be tested e.g. combat system, map layout"
     )
-    async def testingsession(self, interaction: discord.Interaction,
-                              channel: discord.TextChannel,
-                              date: str,
-                              time: str,
-                              testing: str):
+    async def testingsession(
+        self,
+        interaction: discord.Interaction,
+        channel: discord.TextChannel,
+        date: str,
+        time: str,
+        testing: str
+    ):
         await interaction.response.defer(ephemeral=True)
 
         actor = interaction.user
@@ -229,9 +208,9 @@ class TestingCog(commands.Cog):
                 ephemeral=True
             )
 
-        guild       = interaction.guild
-        tester_role = guild.get_role(GAME_TESTER_ROLE_ID)
-        ping_str    = tester_role.mention if tester_role else "@GameTester"
+        guild = interaction.guild
+        tester_role = guild.get_role(GAME_TESTER_ROLE_ID) if guild else None
+        ping_str = tester_role.mention if tester_role else "@GameTester"
 
         embed = discord.Embed(
             title="🎮 Testing Session Announcement",
