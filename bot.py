@@ -22,7 +22,6 @@ LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))
 GUILD_ID       = int(os.getenv("GUILD_ID", "0"))  # Optional: set in .env or leave 0 to sync all joined guilds
 
 COGS = [
-    "cogs.staff",
     "cogs.strikes",
     "cogs.activity",
     "cogs.faction",
