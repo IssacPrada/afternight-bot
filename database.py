@@ -94,6 +94,24 @@ class Database:
                     issued_by   TEXT      NOT NULL,
                     created_at  TIMESTAMP NOT NULL DEFAULT NOW()
                 );
+
+                CREATE TABLE IF NOT EXISTS inactivity_notices (
+    id                 SERIAL PRIMARY KEY,
+    user_id            TEXT      NOT NULL,
+    guild_id           TEXT      NOT NULL,
+    original_nick      TEXT,
+    previous_nick      TEXT,
+    date_start         TEXT      NOT NULL,
+    date_end           TEXT      NOT NULL,
+    end_date_dt        TIMESTAMP NOT NULL,
+    reason             TEXT      NOT NULL,
+    status             TEXT      NOT NULL DEFAULT 'pending', -- pending | approved | denied | completed
+    reviewed_by        TEXT,
+    channel_id         TEXT,
+    message_id         TEXT,
+    created_at         TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
             """)
 
     # ── Strikes ───────────────────────────────────────────────────────────────
