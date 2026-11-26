@@ -5,11 +5,11 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from constants import (
-    ALL_FACTION_ROLES, FACTION_LEADERS, FACTION_COUNCIL_GLOBAL,
+    ALL_FACTION_ROLES, FACTION_LEADERS,
     FACTION_LEADER_MAIN_ROLE, FACTION_GUIDE_ROLE,
-    STAFF_HIERARCHY, SENIOR_STAFF_ROLES, ROLE_STAFF_TEAM, ROLE_ADMIN_TEAM,
+    STAFF_HIERARCHY, STAFF_TEAM_TAGS, SENIOR_STAFF_ROLES, ROLE_STAFF_TEAM, ROLE_ADMIN_TEAM,
     RESIGN_LOG_CHANNEL_ID,
-    get_leader_faction, get_member_faction, get_council_faction,
+    has_faction_role,
     is_staff
 )
 from utils.roblox_group import get_roblox_user_id, get_xcsrf_token
@@ -130,15 +130,14 @@ class ResignModal(discord.ui.Modal, title="Resignation"):
         all_faction_related = set(ALL_FACTION_ROLES) | {
             FACTION_LEADER_MAIN_ROLE,
             FACTION_GUIDE_ROLE,
-            FACTION_COUNCIL_GLOBAL,
-            *FACTION_LEADERS.keys(),
+            *FACTION_LEADERS,
         }
-        all_staff_related = set(STAFF_HIERARCHY) | set(SENIOR_STAFF_ROLES) | {
+        all_staff_related = set(STAFF_HIERARCHY) | set(SENIOR_STAFF_ROLES) | STAFF_TEAM_TAGS | {
             ROLE_STAFF_TEAM,
             ROLE_ADMIN_TEAM,
         }
 
-        if get_leader_faction(member) or get_council_faction(member) or get_member_faction(member):
+        if has_faction_role(member):
             resign_category = "Faction"
             for rid in all_faction_related:
                 role = guild.get_role(rid)
@@ -228,12 +227,7 @@ class ResignCog(commands.Cog):
     )
     async def resign(self, interaction: discord.Interaction):
         member = interaction.user
-        has_role = any([
-            get_member_faction(member) is not None,
-            get_leader_faction(member) is not None,
-            get_council_faction(member) is not None,
-            is_staff(member),
-        ])
+        has_role = has_faction_role(member) or is_staff(member)
         if not has_role:
             return await interaction.response.send_message(
                 "❌ You don't have any staff or faction roles to resign from.",
