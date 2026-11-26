@@ -17,17 +17,30 @@ TESTING_CHANNEL_ID = 1575319593621258400
 FEEDBACK_CHANNEL_ID = 1575319889755906159
 
 # ── Leadership & Staff Roles ──────────────────────────────────────────────────
-ROLE_OWNER = 1575225137542733954       # [O] Owner.
-ROLE_CO_OWNER = 1575225368577704116    # [Co-O] Co-Owner.
-ROLE_CM = 1575225624837099631          # [CM] Community Manager.
-ROLE_SOH = 1575225697406947418         # [SOH] Staff OverHead.
-ROLE_SA = 1575225917368705104          # [SA] Senior Administrator.
-ROLE_ADMIN = 1575226137003687976       # [A] Administrator.
-ROLE_ADMIN_GENERIC = 1575233276556214343
-ROLE_TESTER = 1575227735914061924
+ROLE_OWNER = 1575225137542733954          # [O] Owner.
+ROLE_CO_OWNER = 1575225368577704116       # [Co-O] Co-Owner.
+ROLE_DEVELOPER = 1575233518265700353      # [D] Developer.
+ROLE_CM = 1575225624837099631             # [CM] Community Manager.
+ROLE_SOH = 1575225697406947418            # [SOH] Staff OverHead.
+ROLE_SA = 1575225917368705104             # [SA] Senior Administrator.
+ROLE_ADMIN = 1575226137003687976          # [A] Administrator.
+ROLE_ADMIN_GENERIC = 1575233276556214343  # Admin
+ROLE_HM = 1575226359939211446             # [HM] Head Moderator
+ROLE_SM = 1575226502490882340             # [SM] Senior Moderator.
+ROLE_JM = 1575226571076411515             # [JM] Junior Moderator.
+ROLE_MOD = 1575226626378039426            # [MOD] Moderator.
+ROLE_STAFF = 1575233247598870568          # Staff
+ROLE_TM = 1575226667537010718             # [TM] Trial Moderator.
+ROLE_CONTRIBUTOR = 1575227506443812964    # [C] Contributor.
+ROLE_TESTER = 1575227735914061924         # [T] Tester.
+ROLE_MEDIA_PARTNER = 1575231719945281677  # [MP] Media Partner.
+ROLE_FACTION_GUIDE = 1575228996801663207  # [FG] Faction Guide.
+ROLE_FACTION_MEMBER = 1575228851653443604 # [FM] Faction Member.
+ROLE_HONORED_MEMBER = 1575229161176567828 # [HMB] Honored Member.
+ROLE_MEMBER = 1575231657638764766         # [M] Member.
 
-ROLE_STAFF_TEAM = 0
-ROLE_ADMIN_TEAM = 0
+ROLE_STAFF_TEAM = ROLE_STAFF
+ROLE_ADMIN_TEAM = ROLE_ADMIN_GENERIC
 
 STAFF_HIERARCHY: list[int] = [
     ROLE_OWNER,
@@ -37,6 +50,12 @@ STAFF_HIERARCHY: list[int] = [
     ROLE_SA,
     ROLE_ADMIN,
     ROLE_ADMIN_GENERIC,
+    ROLE_HM,
+    ROLE_SM,
+    ROLE_JM,
+    ROLE_MOD,
+    ROLE_STAFF,
+    ROLE_TM,
 ]
 
 STAFF_HIERARCHY_NAMES: dict[int, str] = {
@@ -47,6 +66,12 @@ STAFF_HIERARCHY_NAMES: dict[int, str] = {
     ROLE_SA: "[SA] Senior Administrator.",
     ROLE_ADMIN: "[A] Administrator.",
     ROLE_ADMIN_GENERIC: "Admin",
+    ROLE_HM: "[HM] Head Moderator",
+    ROLE_SM: "[SM] Senior Moderator.",
+    ROLE_JM: "[JM] Junior Moderator.",
+    ROLE_MOD: "[MOD] Moderator.",
+    ROLE_STAFF: "Staff",
+    ROLE_TM: "[TM] Trial Moderator.",
 }
 
 FIRE_ALLOWED_ROLES: set[int] = {
@@ -56,7 +81,23 @@ FIRE_ALLOWED_ROLES: set[int] = {
     ROLE_SOH,
 }
 
-# ── Faction Config (Replace 0 placeholders with migrated role IDs) ────────────
+# ── Faction Roles ─────────────────────────────────────────────────────────────
+ROLE_FO_GENERIC = 1575227864784175185   # [FO] Faction Overseer.
+ROLE_SOO = 1575227909897986108          # [SOO} Sanguis Order Overseer.
+ROLE_ETO = 1575227971965423756          # [ETO] Eldritch Thorn Overseer.
+ROLE_SVO = 1575228298416496650          # [SVO] SilverVenom Overseer.
+
+ROLE_FL_GENERIC = 1575250992935735467   # [FL] Faction Leader
+ROLE_SOL = 1575228479006449797          # [SOL] Sanguis Order Leader.
+ROLE_ETL = 1575228561881571481          # [ETL] Eldritch Thorn Leader.
+ROLE_SVL = 1575228378850525287          # [SVL] SilverVenom Leader.
+ROLE_SCL = 1575228640507990096          # [SCL] Seraphine Coven Leader.
+
+ROLE_SOM = 1575232569455280329          # [SOM] Sanguis Order Member.
+ROLE_ETM = 1575232880555200693          # [ETM] Eldritch Thorn Member.
+ROLE_SVM = 1575232935555112970          # [SVM] SilverVenom Member.
+ROLE_SCM = 1575232712543965324          # [SCM] Seraphine Coven Member.
+
 FACTION_NAMES: tuple[str, ...] = (
     "Sanguis Order",
     "Eldritch Thorn",
@@ -73,10 +114,10 @@ FACTION_COLORS: dict[str, int] = {
 
 # Map faction name -> set of role IDs belonging to that faction
 FACTION_MEMBER_ROLES: dict[str, set[int]] = {
-    "Sanguis Order": set(),
-    "Eldritch Thorn": set(),
-    "SilverVenom": set(),
-    "Seraphine Coven": set(),
+    "Sanguis Order": {ROLE_SOM, ROLE_SOL, ROLE_SOO},
+    "Eldritch Thorn": {ROLE_ETM, ROLE_ETL, ROLE_ETO},
+    "SilverVenom": {ROLE_SVM, ROLE_SVL, ROLE_SVO},
+    "Seraphine Coven": {ROLE_SCM, ROLE_SCL},
 }
 
 ALL_FACTION_ROLES: set[int] = (
@@ -84,26 +125,34 @@ ALL_FACTION_ROLES: set[int] = (
     | FACTION_MEMBER_ROLES["Eldritch Thorn"]
     | FACTION_MEMBER_ROLES["SilverVenom"]
     | FACTION_MEMBER_ROLES["Seraphine Coven"]
+    | {ROLE_FACTION_MEMBER, ROLE_FACTION_GUIDE, ROLE_FL_GENERIC, ROLE_FO_GENERIC}
 )
 
 FACTION_LEADER_ROLES: set[int] = {
-    0,  # Sanguis Order Leader
-    0,  # Eldritch Thorn Leader
-    0,  # SilverVenom Leader
-    0,  # Seraphine Coven Leader
+    ROLE_SOL,
+    ROLE_ETL,
+    ROLE_SVL,
+    ROLE_SCL,
+    ROLE_FL_GENERIC,
 }
 
 FACTION_OVERSEER_ROLES: set[int] = {
-    0,  # Sanguis Order Overseer
-    0,  # Eldritch Thorn Overseer
-    0,  # SilverVenom Overseer
-    0,  # Seraphine Coven Overseer
+    ROLE_SOO,
+    ROLE_ETO,
+    ROLE_SVO,
+    ROLE_FO_GENERIC,
 }
 
-# Map each Faction Leader / Faction Overseer role ID -> exact faction name
+# Map each faction-specific Leader / Overseer role ID -> exact faction name
+# Seraphine Coven is handled explicitly in helpers so any overseer can manage it
+# (alongside Owner, Co-Owner, and CM), while faction leaders (including SCL) cannot.
 ROLE_TO_MANAGED_FACTION: dict[int, str] = {
-    # Example:
-    # 123456789012345678: "Sanguis Order",
+    ROLE_SOL: "Sanguis Order",
+    ROLE_SOO: "Sanguis Order",
+    ROLE_ETL: "Eldritch Thorn",
+    ROLE_ETO: "Eldritch Thorn",
+    ROLE_SVL: "SilverVenom",
+    ROLE_SVO: "SilverVenom",
 }
 
 # ── Permission Role Groups ────────────────────────────────────────────────────
@@ -137,7 +186,7 @@ def _role_ids(member: discord.abc.User | discord.Member) -> set[int]:
 
 
 def is_staff(member: discord.abc.User | discord.Member) -> bool:
-    return bool(_role_ids(member) & (set(STAFF_HIERARCHY) | FIRE_ALLOWED_ROLES))
+    return bool(_role_ids(member) & (set(STAFF_HIERARCHY) | FIRE_ALLOWED_ROLES | {ROLE_DEVELOPER}))
 
 
 def get_member_faction(member: discord.abc.User | discord.Member) -> str | None:
@@ -163,13 +212,16 @@ def can_manage_staff_strikes(member: discord.abc.User | discord.Member) -> bool:
 def can_faction_demote(member: discord.abc.User | discord.Member, target_faction: str) -> bool:
     """
     Owner, Co-Owner, and Community Manager can demote in any faction.
-    Faction Leaders and Faction Overseers can only demote in their own faction.
+    Seraphine Coven can be managed by any overseer, Owner, Co-Owner, or CM (not leaders).
+    Other factions can be managed by their own faction's leaders/overseers.
     """
     role_ids = _role_ids(member)
     if not role_ids:
         return False
     if role_ids & TOP_FACTION_MGMT_ROLES:
         return True
+    if target_faction == "Seraphine Coven":
+        return bool(role_ids & FACTION_OVERSEER_ROLES)
     managed_factions = {
         ROLE_TO_MANAGED_FACTION[rid]
         for rid in role_ids
@@ -188,6 +240,13 @@ def can_use_faction_commands(member: discord.abc.User | discord.Member) -> tuple
         return False, None
     if role_ids & TOP_FACTION_MGMT_ROLES:
         return True, None
+    if role_ids & FACTION_OVERSEER_ROLES:
+        managed = [
+            ROLE_TO_MANAGED_FACTION[rid]
+            for rid in role_ids
+            if rid in ROLE_TO_MANAGED_FACTION
+        ]
+        return True, managed[0] if managed else "Seraphine Coven"
     managed = [
         ROLE_TO_MANAGED_FACTION[rid]
         for rid in role_ids
@@ -204,3 +263,6 @@ def can_use_blacklist(member: discord.abc.User | discord.Member) -> bool:
 
 def has_fire_permission(member: discord.abc.User | discord.Member) -> bool:
     return bool(_role_ids(member) & FIRE_ALLOWED_ROLES)
+```[cite: 2]
+
+Ready to test this setup, or do you want to go over any remaining cogs next?
