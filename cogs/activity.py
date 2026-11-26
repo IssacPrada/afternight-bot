@@ -4,11 +4,12 @@ cogs/activity.py — /getplayertime and /getfactiontime slash commands
 import discord
 from discord import app_commands
 from discord.ext import commands
+from constants import can_view_activity
 from utils.roblox import (
     fetch_roblox_user,
     get_player_playtime,
     get_faction_playtime,
-    format_playtime
+    format_playtime,
 )
 
 
@@ -25,6 +26,12 @@ class ActivityCog(commands.Cog):
     @app_commands.describe(username="Roblox username")
     async def getplayertime(self, interaction: discord.Interaction, username: str):
         await interaction.response.defer(ephemeral=True)
+
+        if not can_view_activity(interaction.user):
+            return await interaction.followup.send(
+                "❌ Only Owner, Co-Owner, Community Manager, Faction Leaders, or Faction Overseers may use this command.",
+                ephemeral=True
+            )
 
         roblox_data = await fetch_roblox_user(username)
         if not roblox_data:
@@ -67,6 +74,12 @@ class ActivityCog(commands.Cog):
     ])
     async def getfactiontime(self, interaction: discord.Interaction, faction: app_commands.Choice[str]):
         await interaction.response.defer(ephemeral=True)
+
+        if not can_view_activity(interaction.user):
+            return await interaction.followup.send(
+                "❌ Only Owner, Co-Owner, Community Manager, Faction Leaders, or Faction Overseers may use this command.",
+                ephemeral=True
+            )
 
         playtime = await get_faction_playtime(faction.value)
         if playtime is None:
