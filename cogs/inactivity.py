@@ -134,7 +134,7 @@ class InactivityView(discord.ui.View):
         )
         await interaction.message.edit(embed=embed, view=self)
 
-        # Post approved notice & log to INACTIVITY_APPROVED_CHANNEL_ID
+        # Post approved notice & log to INACTIVITY_APPROVED_CHANNEL_ID (1575223603593617530)
         approved_channel = guild.get_channel(INACTIVITY_APPROVED_CHANNEL_ID)
         mention = submitter.mention if submitter else f"<@{notice['user_id']}>"
         if approved_channel:
@@ -173,7 +173,7 @@ class InactivityView(discord.ui.View):
                 pass
 
         await interaction.followup.send(
-            f"✅ Notice **#{notice_id}** approved and logged in <#{INACTIVITY_APPROVED_CHANNEL_ID}>. {nick_status}.",
+            f"✅ Notice **#{notice_id}** approved and posted to <#{INACTIVITY_APPROVED_CHANNEL_ID}>. {nick_status}.",
             ephemeral=True
         )
 
@@ -257,7 +257,6 @@ class InactivityCog(commands.Cog):
         self.check_inactivity_end.cancel()
 
     async def cog_load(self):
-        # Re-register persistent view so buttons keep working after restarts
         self.bot.add_view(InactivityView(self.bot))
 
     @tasks.loop(minutes=30)
@@ -326,7 +325,7 @@ class InactivityCog(commands.Cog):
         review_channel = interaction.guild.get_channel(INACTIVITY_REVIEW_CHANNEL_ID)
         if not review_channel:
             return await interaction.followup.send(
-                "❌ Inactivity channel not found. Check `INACTIVITY_REVIEW_CHANNEL_ID`.",
+                "❌ Inactivity review channel not found. Check `INACTIVITY_REVIEW_CHANNEL_ID`.",
                 ephemeral=True
             )
 
@@ -362,7 +361,7 @@ class InactivityCog(commands.Cog):
         )
 
         await interaction.followup.send(
-            f"📨 Inactivity notice **#{notice_id}** sent to <#{INACTIVITY_REVIEW_CHANNEL_ID}> for approval and logging.",
+            f"📨 Inactivity notice **#{notice_id}** sent to <#{INACTIVITY_REVIEW_CHANNEL_ID}> for review. Approved notices post to <#{INACTIVITY_APPROVED_CHANNEL_ID}>.",
             ephemeral=True
         )
 
