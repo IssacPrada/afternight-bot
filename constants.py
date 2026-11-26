@@ -74,6 +74,16 @@ STAFF_HIERARCHY_NAMES: dict[int, str] = {
     ROLE_TM: "[TM] Trial Moderator.",
 }
 
+SENIOR_STAFF_ROLES: set[int] = {
+    ROLE_OWNER,
+    ROLE_CO_OWNER,
+    ROLE_CM,
+    ROLE_SOH,
+    ROLE_SA,
+    ROLE_ADMIN,
+    ROLE_ADMIN_GENERIC,
+}
+
 FIRE_ALLOWED_ROLES: set[int] = {
     ROLE_OWNER,
     ROLE_CO_OWNER,
@@ -135,6 +145,9 @@ FACTION_LEADER_ROLES: set[int] = {
     ROLE_SCL,
     ROLE_FL_GENERIC,
 }
+
+FACTION_LEADERS: set[int] = FACTION_LEADER_ROLES
+FACTION_LEADER_MAIN_ROLE: int = ROLE_FL_GENERIC
 
 FACTION_OVERSEER_ROLES: set[int] = {
     ROLE_SOO,
@@ -263,3 +276,10 @@ def can_use_blacklist(member: discord.abc.User | discord.Member) -> bool:
 
 def has_fire_permission(member: discord.abc.User | discord.Member) -> bool:
     return bool(_role_ids(member) & FIRE_ALLOWED_ROLES)
+
+
+def can_review_inactivity(member: discord.abc.User | discord.Member) -> bool:
+    return bool(_role_ids(member) & SENIOR_STAFF_ROLES)
+```[cite: 2]
+
+To also clear the `cogs.activity` import error (`get_player_playtime` in `utils/roblox.py`), paste `utils/roblox.py` (or `cogs/activity.py`) and I'll match them up for you.
