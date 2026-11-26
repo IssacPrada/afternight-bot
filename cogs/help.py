@@ -99,6 +99,15 @@ class HelpCog(commands.Cog):
             inline=False
         )
         embed.add_field(
+            name="🪙 Emoji & Stickers",
+            value=(
+                "`/stealemoji` — Copy custom emojis into this server\n"
+                "`/stealsticker` — Copy a sticker into this server\n"
+                "Right-click a message → Apps → **Steal Emojis & Stickers**\n"
+            ),
+            inline=False
+        )
+        embed.add_field(
             name="🔑 Account",
             value=(
                 "`/generatebackupcode` — Generate a role backup code\n"
