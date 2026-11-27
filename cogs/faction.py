@@ -1,31 +1,20 @@
 """
 cogs/faction.py — /factiondemote slash command
 """
-import datetime
 import discord
 from discord import app_commands
 from discord.ext import commands
 from constants import (
-    ALL_FACTION_ROLES,
-    FACTION_COLORS,
-    FACTION_LOG_CHANNEL_ID,
-    can_faction_demote,
-    get_member_faction,
+    FACTION_COLORS, ALL_FACTION_ROLES,
+    get_member_faction, can_use_faction_commands
 )
 from utils.roblox_group import exile_from_group
+import datetime
 
 
 class FactionCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-
-    async def _post_faction_log(self, guild: discord.Guild | None, embed: discord.Embed):
-        if guild:
-            channel = guild.get_channel(FACTION_LOG_CHANNEL_ID)
-            if isinstance(channel, discord.TextChannel):
-                await channel.send(embed=embed)
-                return
-        await self.bot.log_action(embed)
 
     @app_commands.command(
         name="factiondemote",
@@ -33,31 +22,18 @@ class FactionCog(commands.Cog):
     )
     @app_commands.describe(
         user="The Discord member to remove",
-        roblox_username="Their Roblox username",
-        reason="Required reason for the faction demotion"
+        roblox_username="Their Roblox username"
     )
-    async def factiondemote(
-        self,
-        interaction: discord.Interaction,
-        user: discord.Member,
-        roblox_username: str,
-        reason: str
-    ):
+    async def factiondemote(self, interaction: discord.Interaction,
+                             user: discord.Member, roblox_username: str):
         await interaction.response.defer(ephemeral=True)
 
         actor = interaction.user
-        guild = interaction.guild
+        allowed, faction_restriction = can_use_faction_commands(actor)
 
-        if not isinstance(actor, discord.Member) or not guild:
+        if not allowed:
             return await interaction.followup.send(
-                "❌ This command can only be used inside a server.",
-                ephemeral=True
-            )
-
-        cleaned_reason = reason.strip()
-        if not cleaned_reason:
-            return await interaction.followup.send(
-                "❌ You must provide a reason for `/factiondemote`.",
+                "❌ Only faction leaders or faction council may use `/factiondemote`.",
                 ephemeral=True
             )
 
@@ -69,14 +45,16 @@ class FactionCog(commands.Cog):
                 ephemeral=True
             )
 
-        # ── Permission check (Owner/Co-Owner/CM any faction; Leader/Overseer own faction only)
-        if not can_faction_demote(actor, target_faction):
+        # ── If restricted to a faction, enforce it ────────────────────────────
+        if faction_restriction and target_faction != faction_restriction:
             return await interaction.followup.send(
-                f"❌ You do not have permission to demote members in **{target_faction}**.",
+                f"❌ {user.mention} is in **{target_faction}**, not **{faction_restriction}**. "
+                "You can only demote members of your own faction.",
                 ephemeral=True
             )
 
         faction_color = FACTION_COLORS.get(target_faction, 0xFF0000)
+        guild = interaction.guild
 
         # ── Strip all faction roles ───────────────────────────────────────────
         roles_removed = []
@@ -88,7 +66,7 @@ class FactionCog(commands.Cog):
         if roles_removed:
             await user.remove_roles(
                 *roles_removed,
-                reason=f"Faction demotion by {actor.display_name}: {cleaned_reason}"
+                reason=f"Faction demotion by {actor.display_name}"
             )
 
         # ── Exile from Roblox group ───────────────────────────────────────────
@@ -114,13 +92,12 @@ class FactionCog(commands.Cog):
         embed.add_field(name="Discord Member", value=user.mention, inline=True)
         embed.add_field(name="Roblox Username", value=f"`{roblox_username}`", inline=True)
         embed.add_field(name="Faction", value=target_faction, inline=True)
-        embed.add_field(name="Reason", value=cleaned_reason, inline=False)
         embed.add_field(name="Roles Removed", value=removed_names, inline=False)
         embed.add_field(name="Roblox Action", value=message, inline=False)
         embed.set_footer(text=f"Demoted by {actor.display_name}")
         await interaction.followup.send(embed=embed)
 
-        # ── Log to faction channel ────────────────────────────────────────────
+        # ── Log to channel ────────────────────────────────────────────────────
         log_embed = discord.Embed(
             title="📋 Faction Demotion",
             color=discord.Color.orange(),
@@ -130,9 +107,8 @@ class FactionCog(commands.Cog):
         log_embed.add_field(name="Roblox", value=f"`{roblox_username}`", inline=True)
         log_embed.add_field(name="Faction", value=target_faction, inline=True)
         log_embed.add_field(name="Done By", value=actor.mention, inline=True)
-        log_embed.add_field(name="Reason", value=cleaned_reason, inline=False)
         log_embed.add_field(name="Roles Removed", value=removed_names, inline=False)
-        await self._post_faction_log(guild, log_embed)
+        await self.bot.log_action(log_embed)
 
         # ── DM the user ───────────────────────────────────────────────────────
         try:
@@ -143,7 +119,6 @@ class FactionCog(commands.Cog):
             )
             dm_embed.description = (
                 f"You have been removed from **{target_faction}**.\n\n"
-                f"**Reason:** {cleaned_reason}\n"
                 f"• Your faction roles have been removed\n"
                 f"• You have been exiled from the Afternight Factions Roblox group\n\n"
                 f"If you have questions, contact your faction leader."
