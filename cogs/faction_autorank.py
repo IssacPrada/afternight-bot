@@ -1,7 +1,7 @@
 """
-cogs/faction_autorank.py — Auto-rank faction leaders, members, and overseers
-(as basic members) in Roblox group 127271910, accept join requests, delete
-side conversations, and keep a sticky prompt at the bottom.
+cogs/faction_autorank.py — Auto-rank faction leaders (Rank 60), members, and
+overseers (as basic members) in Roblox group 127271910, accept join requests,
+delete side conversations, and keep a sticky prompt at the bottom.
 """
 import os
 import re
@@ -15,6 +15,8 @@ from constants import (
     FACTION_COLORS,
     FACTION_LEADER_MAIN_ROLE,
     FACTION_LEADERS,
+    FACTION_MEMBERS,
+    FACTION_OVERSEERS,
     FACTIONS_GROUP_ID,
 )
 from utils.roblox import fetch_roblox_user
@@ -32,25 +34,28 @@ STICKY_TITLE = "📌 Faction Group Auto-Rank"
 def get_target_faction_and_rank(member: discord.Member) -> tuple[str, int, str] | None:
     """
     Determine target faction name, rank number, and rank label for a Discord member.
-    Leaders get Leader rank; Overseers always get Basic Member rank (never Leader).
+    Leaders get Rank 60; Overseers always get Basic Member rank (10/20/30/40, never Leader).
     """
     role_ids = {r.id for r in member.roles}
 
-    # Check specific faction leader roles first
+    # 1. Specific faction leader roles -> Rank 60
     for role_id in FACTION_LEADERS:
         if role_id in role_ids and role_id in FACTION_AUTORANK_ROLE_MAP:
             return FACTION_AUTORANK_ROLE_MAP[role_id]
 
-    # Check member and overseer roles (overseers map to Basic Member)
+    # 2. General [FL] Faction Leader role -> Rank 60 for their faction
+    if FACTION_LEADER_MAIN_ROLE in role_ids:
+        for role_id, faction in FACTION_MEMBERS.items():
+            if role_id in role_ids:
+                return (faction, 60, "Leader")
+        for role_id, faction in FACTION_OVERSEERS.items():
+            if role_id in role_ids:
+                return (faction, 60, "Leader")
+
+    # 3. Faction member and overseer roles -> Basic Member rank
     for role_id, info in FACTION_AUTORANK_ROLE_MAP.items():
         if role_id in role_ids:
             return info
-
-    # Fallback if user holds [FL] Faction Leader without a faction-specific leader role
-    if FACTION_LEADER_MAIN_ROLE in role_ids:
-        for role_id, info in FACTION_AUTORANK_ROLE_MAP.items():
-            if info[2] == "Leader" and role_id in role_ids:
-                return info
 
     return None
 
@@ -133,7 +138,7 @@ async def rank_faction_member_in_group(
                 json={"roleId": role_id},
             ) as resp:
                 if resp.status == 200:
-                    return True, f"{join_msg} & ranked to {rank_label} (rank `{target_rank}`)."
+                    return True, f"{join_msg} & ranked to {rank_label} (Rank `{target_rank}`)."
                 try:
                     err_data = await resp.json()
                     msg = err_data.get("errors", [{}])[0].get("message", "Unknown error")
@@ -165,7 +170,7 @@ class FactionAutoRankCog(commands.Cog):
                 "• You **must request to join** the Factions group "
                 f"([Afternight Factions](https://www.roblox.com/communities/{FACTIONS_GROUP_ID})) "
                 "first so your request can be accepted.\n"
-                "• Leaders receive their **Leader** rank; Overseers are ranked as **basic faction members**.\n"
+                "• Leaders receive Rank 60; Overseers are ranked as **basic faction members**.\n"
                 "• Any side conversations or non-username messages will be deleted."
             ),
             color=discord.Color.blurple(),
