@@ -1,14 +1,15 @@
 """
 cogs/testing.py — Auto-rank to Tester + /testingsession command
 """
+import os
+import re
+import datetime
+import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
 from utils.roblox import fetch_roblox_user
 from utils.roblox_group import get_xcsrf_token
-import aiohttp
-import datetime
-import os
 
 # ── Config ────────────────────────────────────────────────────────────────────
 TESTING_CHANNEL_ID  = 1575319215643033690
@@ -16,6 +17,8 @@ FEEDBACK_CHANNEL_ID = 1575319889755906159
 GAME_TESTER_ROLE_ID = 1575227735914061924  # [T] Tester.
 LEGACIES_GROUP_ID   = 1024076883
 TESTER_RANK         = 40
+STICKY_TITLE        = "📌 Tester Group Auto-Rank"
+USERNAME_RE         = re.compile(r"^[A-Za-z0-9_]{3,20}$")
 
 ALLOWED_ROLES: set[int] = {
     1575225137542733954,  # [O] Owner.
@@ -31,8 +34,6 @@ HEADERS_LEGACIES = {
     "Content-Type": "application/json",
 }
 
-
-# ── Roblox helpers ────────────────────────────────────────────────────────────
 
 async def get_legacies_role_id(rank: int) -> int | None:
     """Get the roleId for a given rank in the Legacies group."""
@@ -84,27 +85,71 @@ async def rank_to_tester(roblox_username: str) -> tuple[bool, str]:
                 json={"roleId": role_id}
             ) as resp:
                 if resp.status == 200:
-                    return True, f"✅ `{roblox_username}` has been ranked to **Tester** in Afternight Legacies."
+                    return True, f"`{roblox_username}` has been ranked to **Tester** in Afternight Legacies."
                 else:
                     error = await resp.json()
                     msg = error.get("errors", [{}])[0].get("message", "Unknown error")
-                    return False, f"❌ Roblox API error: {msg}"
+                    return False, f"Roblox API error: {msg}"
 
     except Exception as e:
-        return False, f"❌ Exception: {str(e)}"
+        return False, f"Exception: {str(e)}"
 
 
 class TestingCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    # ── Auto-rank listener ────────────────────────────────────────────────────
+    async def refresh_sticky_note(self, channel: discord.TextChannel):
+        """Remove previous sticky note and post a fresh one at the bottom."""
+        async for msg in channel.history(limit=30):
+            if msg.author == self.bot.user and msg.embeds:
+                if (msg.embeds[0].title or "") == STICKY_TITLE:
+                    try:
+                        await msg.delete()
+                    except discord.Forbidden:
+                        pass
+
+        embed = discord.Embed(
+            title=STICKY_TITLE,
+            description=(
+                "**Enter your Roblox username to be ranked.**\n\n"
+                "• Only `[T] Tester.` members may submit usernames here.\n"
+                "• Any side conversations or non-username messages will be deleted."
+            ),
+            color=discord.Color.green(),
+        )
+        await channel.send(embed=embed)
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        channel = self.bot.get_channel(TESTING_CHANNEL_ID)
+        if isinstance(channel, discord.TextChannel):
+            await self.refresh_sticky_note(channel)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        if message.author.bot:
+        if message.author.bot or not message.guild:
             return
         if message.channel.id != TESTING_CHANNEL_ID:
+            return
+
+        roblox_username = message.content.strip()
+        is_valid_username = (
+            bool(USERNAME_RE.match(roblox_username))
+            and not message.attachments
+            and not message.stickers
+        )
+
+        # Delete side conversations / non-username messages
+        if not is_valid_username:
+            try:
+                await message.delete()
+            except discord.Forbidden:
+                pass
+            await message.channel.send(
+                f"{message.author.mention} Only Roblox usernames are allowed here. Side conversations are removed.",
+                delete_after=8,
+            )
             return
 
         async for msg in message.channel.history(limit=100):
@@ -117,23 +162,20 @@ class TestingCog(commands.Cog):
                         "⚠️ You have already been ranked to Tester!",
                         delete_after=10
                     )
+                    await self.refresh_sticky_note(message.channel)
                     return
 
         tester_role = message.guild.get_role(GAME_TESTER_ROLE_ID)
         if tester_role not in message.author.roles:
-            await message.reply(
-                "❌ Only Game Testers may submit their username here.",
+            try:
+                await message.delete()
+            except discord.Forbidden:
+                pass
+            await message.channel.send(
+                f"{message.author.mention} Only Game Testers may submit their username here.",
                 delete_after=10
             )
-            return
-
-        roblox_username = message.content.strip()
-
-        if " " in roblox_username or len(roblox_username) > 20 or len(roblox_username) < 1:
-            await message.reply(
-                "❌ Please send just your Roblox username with no spaces.",
-                delete_after=10
-            )
+            await self.refresh_sticky_note(message.channel)
             return
 
         async with message.channel.typing():
@@ -144,6 +186,7 @@ class TestingCog(commands.Cog):
                     "Please double check your username and try again.",
                     delete_after=15
                 )
+                await self.refresh_sticky_note(message.channel)
                 return
 
             success, result_msg = await rank_to_tester(roblox_username)
@@ -167,7 +210,7 @@ class TestingCog(commands.Cog):
         else:
             await message.reply(f"❌ Failed to rank: {result_msg}", delete_after=15)
 
-    # ── /testingsession ───────────────────────────────────────────────────────
+        await self.refresh_sticky_note(message.channel)
 
     @app_commands.command(
         name="testingsession",
@@ -232,7 +275,6 @@ class TestingCog(commands.Cog):
             ephemeral=True
         )
 
-        # ── Log ───────────────────────────────────────────────────────────────
         log_embed = discord.Embed(
             title="📋 Testing Session Announced",
             color=discord.Color.blurple(),
