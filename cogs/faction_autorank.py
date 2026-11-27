@@ -1,6 +1,7 @@
 """
-cogs/faction_autorank.py — Auto-rank faction members & overseers (as basic members)
-in Roblox group 127271910, delete side chat, and keep a sticky prompt at the bottom.
+cogs/faction_autorank.py — Auto-rank faction leaders, members, and overseers
+(as basic members) in Roblox group 127271910, accept join requests, delete
+side conversations, and keep a sticky prompt at the bottom.
 """
 import os
 import re
@@ -12,6 +13,8 @@ from constants import (
     FACTION_AUTORANK_CHANNEL_ID,
     FACTION_AUTORANK_ROLE_MAP,
     FACTION_COLORS,
+    FACTION_LEADER_MAIN_ROLE,
+    FACTION_LEADERS,
     FACTIONS_GROUP_ID,
 )
 from utils.roblox import fetch_roblox_user
@@ -26,15 +29,29 @@ USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,20}$")
 STICKY_TITLE = "📌 Faction Group Auto-Rank"
 
 
-def get_target_faction_and_rank(member: discord.Member) -> tuple[str, int] | None:
+def get_target_faction_and_rank(member: discord.Member) -> tuple[str, int, str] | None:
     """
-    Determine target faction name and basic member rank for a Discord member.
-    Overseers are intentionally mapped to basic member ranks (never Leader).
+    Determine target faction name, rank number, and rank label for a Discord member.
+    Leaders get Leader rank; Overseers always get Basic Member rank (never Leader).
     """
     role_ids = {r.id for r in member.roles}
+
+    # Check specific faction leader roles first
+    for role_id in FACTION_LEADERS:
+        if role_id in role_ids and role_id in FACTION_AUTORANK_ROLE_MAP:
+            return FACTION_AUTORANK_ROLE_MAP[role_id]
+
+    # Check member and overseer roles (overseers map to Basic Member)
     for role_id, info in FACTION_AUTORANK_ROLE_MAP.items():
         if role_id in role_ids:
             return info
+
+    # Fallback if user holds [FL] Faction Leader without a faction-specific leader role
+    if FACTION_LEADER_MAIN_ROLE in role_ids:
+        for role_id, info in FACTION_AUTORANK_ROLE_MAP.items():
+            if info[2] == "Leader" and role_id in role_ids:
+                return info
+
     return None
 
 
@@ -60,7 +77,6 @@ async def accept_join_request_if_pending(group_id: int, user_id: int, xcsrf: str
     """
     req_headers = {**HEADERS, "x-csrf-token": xcsrf}
     async with aiohttp.ClientSession() as session:
-        # First verify if user is already in the group
         async with session.get(
             f"https://groups.roblox.com/v1/groups/{group_id}/users/{user_id}/role",
             headers=req_headers,
@@ -70,7 +86,6 @@ async def accept_join_request_if_pending(group_id: int, user_id: int, xcsrf: str
                 if role_json.get("role", {}).get("rank", 0) > 0:
                     return True, "Already in group"
 
-        # Otherwise attempt to accept pending join request
         async with session.post(
             f"https://groups.roblox.com/v1/groups/{group_id}/join-requests/users/{user_id}",
             headers=req_headers,
@@ -89,7 +104,9 @@ async def accept_join_request_if_pending(group_id: int, user_id: int, xcsrf: str
             )
 
 
-async def rank_faction_member_in_group(roblox_username: str, target_rank: int) -> tuple[bool, str]:
+async def rank_faction_member_in_group(
+    roblox_username: str, target_rank: int, rank_label: str
+) -> tuple[bool, str]:
     if not COOKIE:
         return False, "ROBLOX_SECURITY_COOKIE is not configured."
 
@@ -116,7 +133,7 @@ async def rank_faction_member_in_group(roblox_username: str, target_rank: int) -
                 json={"roleId": role_id},
             ) as resp:
                 if resp.status == 200:
-                    return True, f"{join_msg} & ranked to basic faction member (rank `{target_rank}`)."
+                    return True, f"{join_msg} & ranked to {rank_label} (rank `{target_rank}`)."
                 try:
                     err_data = await resp.json()
                     msg = err_data.get("errors", [{}])[0].get("message", "Unknown error")
@@ -148,7 +165,7 @@ class FactionAutoRankCog(commands.Cog):
                 "• You **must request to join** the Factions group "
                 f"([Afternight Factions](https://www.roblox.com/communities/{FACTIONS_GROUP_ID})) "
                 "first so your request can be accepted.\n"
-                "• Overseers are ranked as **basic faction members** (not Leaders).\n"
+                "• Leaders receive their **Leader** rank; Overseers are ranked as **basic faction members**.\n"
                 "• Any side conversations or non-username messages will be deleted."
             ),
             color=discord.Color.blurple(),
@@ -173,13 +190,12 @@ class FactionAutoRankCog(commands.Cog):
         content = message.content.strip()
         is_valid_username = bool(USERNAME_RE.match(content)) and not message.attachments and not message.stickers
 
-        # Delete side conversations / non-username messages
         if not is_valid_username:
             try:
                 await message.delete()
             except discord.Forbidden:
                 pass
-            notice = await message.channel.send(
+            await message.channel.send(
                 f"{message.author.mention} Only Roblox usernames are allowed here. Side conversations are removed.",
                 delete_after=8,
             )
@@ -192,13 +208,13 @@ class FactionAutoRankCog(commands.Cog):
             except discord.Forbidden:
                 pass
             await message.channel.send(
-                f"{message.author.mention} You do not have an eligible Faction Member or Overseer role.",
+                f"{message.author.mention} You do not have an eligible Faction role.",
                 delete_after=10,
             )
             await self.refresh_sticky_note(message.channel)
             return
 
-        faction_name, target_rank = target_info
+        faction_name, target_rank, rank_label = target_info
         faction_color = FACTION_COLORS.get(faction_name, 0x5865F2)
 
         async with message.channel.typing():
@@ -211,7 +227,9 @@ class FactionAutoRankCog(commands.Cog):
                 await self.refresh_sticky_note(message.channel)
                 return
 
-            success, detail_msg = await rank_faction_member_in_group(content, target_rank)
+            success, detail_msg = await rank_faction_member_in_group(
+                content, target_rank, rank_label
+            )
 
         if success:
             embed = discord.Embed(
@@ -223,7 +241,7 @@ class FactionAutoRankCog(commands.Cog):
                 embed.set_thumbnail(url=roblox_data["avatar_url"])
             embed.add_field(name="Discord", value=message.author.mention, inline=True)
             embed.add_field(name="Roblox", value=f"`{content}`", inline=True)
-            embed.add_field(name="Faction", value=f"{faction_name} (Basic Member)", inline=False)
+            embed.add_field(name="Faction", value=f"{faction_name} ({rank_label})", inline=False)
             embed.add_field(name="Status", value=detail_msg, inline=False)
             await message.reply(embed=embed)
         else:
