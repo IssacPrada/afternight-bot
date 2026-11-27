@@ -11,7 +11,7 @@ import datetime
 import os
 
 # ── Config ────────────────────────────────────────────────────────────────────
-TESTING_CHANNEL_ID  = 1575319593621258400
+TESTING_CHANNEL_ID  = 1575319215643033690
 FEEDBACK_CHANNEL_ID = 1575319889755906159
 GAME_TESTER_ROLE_ID = 1575227735914061924  # [T] Tester.
 LEGACIES_GROUP_ID   = 1024076883
