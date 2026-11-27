@@ -1,39 +1,30 @@
 """
 cogs/testing.py — Auto-rank to Tester + /testingsession command
 """
-import datetime
-import os
-import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
-from constants import (
-    FEEDBACK_CHANNEL_ID as CONST_FEEDBACK_CHANNEL_ID,
-    ROLE_CM,
-    ROLE_CO_OWNER,
-    ROLE_DEVELOPER,
-    ROLE_OWNER,
-    ROLE_TESTER,
-)
 from utils.roblox import fetch_roblox_user
 from utils.roblox_group import get_xcsrf_token
+import aiohttp
+import datetime
+import os
 
 # ── Config ────────────────────────────────────────────────────────────────────
-TESTING_CHANNEL_ID = 1575319215643033690
-FEEDBACK_CHANNEL_ID = CONST_FEEDBACK_CHANNEL_ID or 1575319889755906159
-GAME_TESTER_ROLE_ID = ROLE_TESTER or 1575227735914061924
-LEGACIES_GROUP_ID = 1024076883
-TESTER_RANK = 40
+TESTING_CHANNEL_ID  = 1575319593621258400
+FEEDBACK_CHANNEL_ID = 1575319889755906159
+GAME_TESTER_ROLE_ID = 1575227735914061924  # [T] Tester.
+LEGACIES_GROUP_ID   = 1024076883
+TESTER_RANK         = 40
 
-SESSION_ALLOWED_ROLES: set[int] = {
-    ROLE_OWNER,      # [O] Owner.
-    ROLE_CO_OWNER,   # [Co-O] Co-Owner.
-    ROLE_DEVELOPER,  # [D] Developer.
-    ROLE_CM,         # [CM] Community Manager.
+ALLOWED_ROLES: set[int] = {
+    1575225137542733954,  # [O] Owner.
+    1575225368577704116,  # [Co-O] Co-Owner.
+    1575233518265700353,  # [D] Developer.
 }
 
 GAME_LINK = "https://www.roblox.com/games/92315559992414/Afternight-Legacies-TESTING"
-COOKIE = os.getenv("ROBLOX_SECURITY_COOKIE")
+COOKIE    = os.getenv("ROBLOX_SECURITY_COOKIE")
 
 HEADERS_LEGACIES = {
     "Cookie": f".ROBLOSECURITY={COOKIE}",
@@ -94,9 +85,10 @@ async def rank_to_tester(roblox_username: str) -> tuple[bool, str]:
             ) as resp:
                 if resp.status == 200:
                     return True, f"✅ `{roblox_username}` has been ranked to **Tester** in Afternight Legacies."
-                error = await resp.json()
-                msg = error.get("errors", [{}])[0].get("message", "Unknown error")
-                return False, f"❌ Roblox API error: {msg}"
+                else:
+                    error = await resp.json()
+                    msg = error.get("errors", [{}])[0].get("message", "Unknown error")
+                    return False, f"❌ Roblox API error: {msg}"
 
     except Exception as e:
         return False, f"❌ Exception: {str(e)}"
@@ -110,29 +102,16 @@ class TestingCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        if message.author.bot or not message.guild:
+        if message.author.bot:
             return
         if message.channel.id != TESTING_CHANNEL_ID:
             return
 
-        # ── Only Game Testers can use this channel ────────────────────────────
-        tester_role = message.guild.get_role(GAME_TESTER_ROLE_ID)
-        if not tester_role or tester_role not in message.author.roles:
-            await message.reply(
-                "❌ Only Game Testers may submit their username here.",
-                delete_after=10
-            )
-            return
-
-        # ── Prevent duplicate ranking ─────────────────────────────────────────
         async for msg in message.channel.history(limit=100):
             if msg.author == self.bot.user and msg.reference:
                 ref = msg.reference.resolved
-                if (
-                    ref
-                    and ref.author == message.author
-                    and msg.embeds
-                    and "Tester Rank Granted" in (msg.embeds[0].title or "")
+                if ref and ref.author == message.author and "Tester Rank Granted" in (
+                    msg.embeds[0].title if msg.embeds else ""
                 ):
                     await message.reply(
                         "⚠️ You have already been ranked to Tester!",
@@ -140,9 +119,16 @@ class TestingCog(commands.Cog):
                     )
                     return
 
+        tester_role = message.guild.get_role(GAME_TESTER_ROLE_ID)
+        if tester_role not in message.author.roles:
+            await message.reply(
+                "❌ Only Game Testers may submit their username here.",
+                delete_after=10
+            )
+            return
+
         roblox_username = message.content.strip()
 
-        # Basic validation — no spaces, reasonable length
         if " " in roblox_username or len(roblox_username) > 20 or len(roblox_username) < 1:
             await message.reply(
                 "❌ Please send just your Roblox username with no spaces.",
@@ -168,9 +154,7 @@ class TestingCog(commands.Cog):
                 color=discord.Color.green(),
                 timestamp=datetime.datetime.utcnow()
             )
-            embed.set_thumbnail(
-                url=roblox_data.get("avatar_url") or message.author.display_avatar.url
-            )
+            embed.set_thumbnail(url=roblox_data.get("avatar_url") or message.author.display_avatar.url)
             embed.add_field(name="Discord", value=message.author.mention, inline=True)
             embed.add_field(name="Roblox", value=f"`{roblox_username}`", inline=True)
             embed.add_field(
@@ -195,28 +179,25 @@ class TestingCog(commands.Cog):
         time="Time of the session e.g. 5:00 PM EST",
         testing="What will be tested e.g. combat system, map layout"
     )
-    async def testingsession(
-        self,
-        interaction: discord.Interaction,
-        channel: discord.TextChannel,
-        date: str,
-        time: str,
-        testing: str
-    ):
+    async def testingsession(self, interaction: discord.Interaction,
+                              channel: discord.TextChannel,
+                              date: str,
+                              time: str,
+                              testing: str):
         await interaction.response.defer(ephemeral=True)
 
         actor = interaction.user
-        actor_role_ids = {r.id for r in actor.roles} if isinstance(actor, discord.Member) else set()
+        actor_role_ids = {r.id for r in actor.roles}
 
-        if not actor_role_ids & SESSION_ALLOWED_ROLES:
+        if not actor_role_ids & ALLOWED_ROLES:
             return await interaction.followup.send(
-                "❌ Only Owner, Co-Owner, Developers, or Community Managers may use `/testingsession`.",
+                "❌ Only Developers, Co-Owners, or Owners may use `/testingsession`.",
                 ephemeral=True
             )
 
-        guild = interaction.guild
-        tester_role = guild.get_role(GAME_TESTER_ROLE_ID) if guild else None
-        ping_str = tester_role.mention if tester_role else "@GameTester"
+        guild       = interaction.guild
+        tester_role = guild.get_role(GAME_TESTER_ROLE_ID)
+        ping_str    = tester_role.mention if tester_role else "@GameTester"
 
         embed = discord.Embed(
             title="🎮 Testing Session Announcement",
