@@ -4,13 +4,14 @@ cogs/shout.py — /shout slash command
 import discord
 from discord import app_commands
 from discord.ext import commands
+import datetime
 
 # ── Config ────────────────────────────────────────────────────────────────────
 ALLOWED_ROLES: set[int] = {
     1575225137542733954,  # [O] Owner.
     1575225368577704116,  # [Co-O] Co-Owner.
     1575225624837099631,  # [CM] Community Manager.
-    1575225697406947418,  # [SOH] Staff OverHead.
+    1575225697406947418,  # [SOH] Staff OverHead
 }
 
 
@@ -32,19 +33,16 @@ class ShoutCog(commands.Cog):
         destination="The channel to send the copied message to",
         ping="Optional role to ping with the message"
     )
-    async def shout(
-        self,
-        interaction: discord.Interaction,
-        message_id: str,
-        source_channel: discord.TextChannel,
-        destination: discord.TextChannel,
-        ping: discord.Role = None
-    ):
+    async def shout(self, interaction: discord.Interaction,
+                    message_id: str,
+                    source_channel: discord.TextChannel,
+                    destination: discord.TextChannel,
+                    ping: discord.Role = None):
         await interaction.response.defer(ephemeral=True)
 
         actor = interaction.user
 
-        if not isinstance(actor, discord.Member) or not has_shout_permission(actor):
+        if not has_shout_permission(actor):
             return await interaction.followup.send(
                 "❌ Only Staff OverHead, Community Manager, Co-Owner, or Owner may use `/shout`.",
                 ephemeral=True
@@ -105,6 +103,7 @@ class ShoutCog(commands.Cog):
                 ephemeral=True
             )
 
+        # ── Confirmation ──────────────────────────────────────────────────────
         await interaction.followup.send(
             f"✅ Message copied from {source_channel.mention} and sent to {destination.mention}.",
             ephemeral=True
@@ -116,11 +115,11 @@ class ShoutCog(commands.Cog):
             color=discord.Color.blurple(),
             timestamp=discord.utils.utcnow()
         )
-        log_embed.add_field(name="Sent By", value=actor.mention, inline=True)
-        log_embed.add_field(name="From", value=source_channel.mention, inline=True)
-        log_embed.add_field(name="To", value=destination.mention, inline=True)
-        log_embed.add_field(name="Message ID", value=message_id, inline=True)
-        log_embed.add_field(name="Ping", value=ping.mention if ping else "None", inline=True)
+        log_embed.add_field(name="Sent By",    value=actor.mention,           inline=True)
+        log_embed.add_field(name="From",       value=source_channel.mention,  inline=True)
+        log_embed.add_field(name="To",         value=destination.mention,     inline=True)
+        log_embed.add_field(name="Message ID", value=message_id,              inline=True)
+        log_embed.add_field(name="Ping",       value=ping.mention if ping else "None", inline=True)
         await self.bot.log_action(log_embed)
 
 
