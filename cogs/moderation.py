@@ -1,482 +1,960 @@
 """
-cogs/moderation.py — Moderation, warnings, tempbans, staff strikes, promotions, demotions, and firing
+cogs/moderation.py — Full moderation suite (slash commands only)
 """
-import datetime
-from typing import Optional
 import discord
 from discord import app_commands
-from discord.ext import commands, tasks
-from constants import (
-    FIRE_ALLOWED_ROLES,
-    MOD_LOG_CHANNEL_ID,
-    ROLE_ADMIN_TEAM,
-    ROLE_STAFF_TEAM,
-    SENIOR_STAFF_ROLES,
-    STAFF_HIERARCHY,
-    STAFF_HIERARCHY_NAMES,
-    get_member_rank_index,
-    has_fire_permission,
-    is_staff,
-)
+from discord.ext import commands
+import datetime
+from discord.ext import tasks
+
+# ── Role IDs ──────────────────────────────────────────────────────────────────
+ROLE_STAFF    = 1575233247598870568  # Staff
+ROLE_ADMIN    = 1575233276556214343  # Admin
+ROLE_CM       = 1575225624837099631  # [CM] Community Manager.
+ROLE_OVERSEER = 1575225697406947418  # [SOH] Staff OverHead
+ROLE_CO_OWNER = 1575225368577704116  # [Co-O] Co-Owner.
+ROLE_OWNER    = 1575225137542733954  # [O] Owner.
+
+# ── Log Channels ──────────────────────────────────────────────────────────────
+WARN_LOG_CHANNEL         = 1575683752430928012
+BAN_LOG_CHANNEL          = 1575683719274954842
+KICK_LOG_CHANNEL         = 1575223771466436719
+MUTE_LOG_CHANNEL         = 1575223771466436719
+LOCKDOWN_LOG_CHANNEL     = 1575292898986172436
+UNBAN_LOG_CHANNEL        = 1575292898986172436
+STAFF_STRIKE_LOG_CHANNEL = 1575292898986172436
+
+APPEAL_SERVER = "https://discord.gg/dQAbatSEcw"
+
+LOCKDOWN_TEXT_CHANNELS = [
+    1575220072505671921,
+    1575220129246093434,
+    1575220150200828105,
+    1575220167900926163,
+    1575220259898523740,
+    1575220353880297492,
+]
+LOCKDOWN_VOICE_CHANNELS = [
+    1575684643884114090,
+    1575684690126446592,
+    1575684718949568532,
+]
+
+ALL_STAFF_ROLES = [
+    ROLE_STAFF,
+    ROLE_ADMIN,
+    ROLE_CM,
+    ROLE_OVERSEER,
+]
 
 
-def parse_unban_date(date_str: str) -> datetime.datetime:
-    """Parse a tempban unban date into a naive UTC datetime (end of day)."""
-    clean = date_str.strip().rstrip(".")
-    for fmt in ("%B %d, %Y", "%b %d, %Y", "%m/%d/%Y", "%m-%d-%Y", "%Y-%m-%d", "%m %d, %Y"):
-        try:
-            dt = datetime.datetime.strptime(clean, fmt)
-            return dt.replace(hour=23, minute=59, second=59)
-        except ValueError:
-            continue
-    return datetime.datetime.utcnow() + datetime.timedelta(days=7)
+# ── Permission helpers ────────────────────────────────────────────────────────
 
+def get_role_ids(member: discord.Member) -> set[int]:
+    return {r.id for r in member.roles}
+
+
+def is_staff(member: discord.Member) -> bool:
+    return bool(get_role_ids(member) & {ROLE_STAFF, ROLE_ADMIN, ROLE_CM, ROLE_OVERSEER, ROLE_CO_OWNER, ROLE_OWNER})
+
+
+def is_admin(member: discord.Member) -> bool:
+    return bool(get_role_ids(member) & {ROLE_ADMIN, ROLE_CM, ROLE_OVERSEER, ROLE_CO_OWNER, ROLE_OWNER})
+
+
+def is_head(member: discord.Member) -> bool:
+    return bool(get_role_ids(member) & {ROLE_CM, ROLE_OVERSEER, ROLE_CO_OWNER, ROLE_OWNER})
+
+
+def parse_duration(duration: str) -> datetime.timedelta | None:
+    duration = duration.lower().strip()
+    try:
+        if duration.endswith("m"):
+            return datetime.timedelta(minutes=int(duration[:-1]))
+        elif duration.endswith("h"):
+            return datetime.timedelta(hours=int(duration[:-1]))
+        elif duration.endswith("d"):
+            return datetime.timedelta(days=int(duration[:-1]))
+    except ValueError:
+        pass
+    return None
+
+
+def format_evidence(evidence: str, attachments: list) -> str:
+    parts = []
+    if evidence and evidence != "None provided":
+        parts.append(evidence)
+    for att in attachments:
+        parts.append(att.url)
+    return "\n".join(parts) if parts else "None provided"
+
+
+# ── Clear Warns Dropdown ──────────────────────────────────────────────────────
+
+class WarnSelect(discord.ui.Select):
+    def __init__(self, warns: list, user: discord.Member, bot):
+        self.warn_list = warns
+        self.target    = user
+        self.bot       = bot
+
+        options = [
+            discord.SelectOption(
+                label=f"Warning {i + 1} — {str(w.get('created_at', ''))[:10]}",
+                description=w["reason"][:100],
+                value=str(i)
+            )
+            for i, w in enumerate(warns[:24])
+        ]
+        options.insert(0, discord.SelectOption(
+            label="⚠️ Clear ALL warnings",
+            description="Remove every warning for this user",
+            value="all"
+        ))
+
+        super().__init__(
+            placeholder="Select a warning to remove...",
+            options=options,
+            min_values=1,
+            max_values=1
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        guild = interaction.guild
+
+        if self.values[0] == "all":
+            removed = await self.bot.db.clear_warns(str(self.target.id), str(guild.id))
+            await interaction.followup.send(
+                f"✅ Cleared all **{removed}** warning(s) from {self.target.mention}.",
+                ephemeral=True
+            )
+        else:
+            index   = int(self.values[0])
+            warn    = self.warn_list[index]
+            removed = await self.bot.db.delete_warn_by_index(
+                str(self.target.id), str(guild.id), index
+            )
+            if removed:
+                await interaction.followup.send(
+                    f"✅ Removed warning {index + 1} from {self.target.mention}:\n"
+                    f"**Reason:** {warn['reason']}",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send("❌ Could not remove that warning.", ephemeral=True)
+
+        for item in self.view.children:
+            item.disabled = True
+        await interaction.message.edit(view=self.view)
+
+
+class WarnSelectView(discord.ui.View):
+    def __init__(self, warns: list, user: discord.Member, bot):
+        super().__init__(timeout=60)
+        self.add_item(WarnSelect(warns, user, bot))
+
+
+# ── Cog ───────────────────────────────────────────────────────────────────────
 
 class ModerationCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.check_temp_bans.start()
+        self.check_unbans.start()
 
     def cog_unload(self):
-        self.check_temp_bans.cancel()
+        self.check_unbans.cancel()
 
-    async def _post_mod_log(self, guild: discord.Guild, embed: discord.Embed):
-        channel = guild.get_channel(MOD_LOG_CHANNEL_ID)
-        if channel:
-            await channel.send(embed=embed)
-        else:
-            await self.bot.log_action(embed)
-
-    def _can_manage_staff_ranks(self, member: discord.Member) -> bool:
-        role_ids = {r.id for r in member.roles}
-        return bool(role_ids & set(SENIOR_STAFF_ROLES)) or has_fire_permission(member)
-
-    async def _sync_team_roles(self, member: discord.Member, rank_index: int, reason: str):
-        """Ensure Staff / Admin team roles match the member's rank in STAFF_HIERARCHY."""
-        staff_role = member.guild.get_role(ROLE_STAFF_TEAM)
-        admin_role = member.guild.get_role(ROLE_ADMIN_TEAM)
-
-        # Indices 0..4 are [TM]..[HM], indices 5..6 are [A]..[SA]
-        should_have_staff = rank_index >= 0
-        should_have_admin = rank_index >= 5
-
-        if staff_role:
-            if should_have_staff and staff_role not in member.roles:
-                await member.add_roles(staff_role, reason=reason)
-            elif not should_have_staff and staff_role in member.roles:
-                await member.remove_roles(staff_role, reason=reason)
-
-        if admin_role:
-            if should_have_admin and admin_role not in member.roles:
-                await member.add_roles(admin_role, reason=reason)
-            elif not should_have_admin and admin_role in member.roles:
-                await member.remove_roles(admin_role, reason=reason)
+    # ── Auto unban ────────────────────────────────────────────────────────────
 
     @tasks.loop(minutes=30)
-    async def check_temp_bans(self):
+    async def check_unbans(self):
         await self.bot.wait_until_ready()
         try:
-            active_bans = await self.bot.db.get_expired_temp_bans()
-            now = datetime.datetime.utcnow()
-            for ban in active_bans:
-                unban_dt = parse_unban_date(ban["unban_date"])
-                if now < unban_dt:
-                    continue
-
+            expired = await self.bot.db.get_expired_temp_bans()
+            for ban in expired:
                 guild = self.bot.get_guild(int(ban["guild_id"]))
-                if guild:
-                    user = discord.Object(id=int(ban["user_id"]))
+                if not guild:
+                    continue
+                try:
+                    user = await self.bot.fetch_user(int(ban["user_id"]))
+                    await guild.unban(user, reason="Temporary ban expired")
+                    await self.bot.db.mark_temp_ban_expired(ban["id"])
                     try:
-                        await guild.unban(user, reason=f"Temp ban #{ban['id']} expired")
-                    except discord.NotFound:
-                        pass
+                        dm = discord.Embed(
+                            title="✅ You Have Been Unbanned",
+                            color=discord.Color.green(),
+                            timestamp=discord.utils.utcnow()
+                        )
+                        dm.description = (
+                            f"Your temporary ban from **Afternight Legacies** has expired.\n\n"
+                            f"You may rejoin the server. Please follow the rules.\n\n"
+                            f"If you believe your ban was unfair:\n{APPEAL_SERVER}"
+                        )
+                        await user.send(embed=dm)
                     except discord.Forbidden:
                         pass
-
-                    embed = discord.Embed(
-                        title="🔓 Temp Ban Expired",
-                        description=f"<@{ban['user_id']}>'s temporary ban (**{ban['unban_date']}**) has expired.",
-                        color=discord.Color.green(),
-                        timestamp=now
-                    )
-                    await self._post_mod_log(guild, embed)
-
-                await self.bot.db.mark_temp_ban_expired(ban["id"])
+                    log_channel = guild.get_channel(BAN_LOG_CHANNEL)
+                    if log_channel:
+                        e = discord.Embed(
+                            title="✅ Temp Ban Expired",
+                            color=discord.Color.green(),
+                            timestamp=discord.utils.utcnow()
+                        )
+                        e.add_field(name="Discord ID", value=f"{user.mention} (`{user.id}`)", inline=False)
+                        e.add_field(name="Reason",     value="Temporary ban duration expired.", inline=False)
+                        await log_channel.send(embed=e)
+                except Exception:
+                    pass
         except Exception:
             pass
 
-    @check_temp_bans.before_loop
-    async def before_check_temp_bans(self):
+    @check_unbans.before_loop
+    async def before_check_unbans(self):
         await self.bot.wait_until_ready()
 
-    # ── Warnings ──────────────────────────────────────────────────────────────
+    # ── /warn ─────────────────────────────────────────────────────────────────
 
-    @app_commands.command(name="warn", description="Issue a warning to a member.")
+    @app_commands.command(name="warn", description="Warn a community member.")
     @app_commands.describe(
-        member="Member to warn",
+        user="The member to warn",
         reason="Reason for the warning",
-        evidence="Optional link or proof"
+        evidence="Evidence link(s) — separate multiple with commas",
+        attachment1="Evidence attachment (optional)",
+        attachment2="Second evidence attachment (optional)"
     )
-    async def warn(
-        self,
-        interaction: discord.Interaction,
-        member: discord.Member,
-        reason: str,
-        evidence: Optional[str] = None
-    ):
-        if not is_staff(interaction.user):
-            return await interaction.response.send_message(
-                "❌ Only staff members can issue warnings.",
-                ephemeral=True
-            )
+    async def warn(self, interaction: discord.Interaction,
+                   user: discord.Member, reason: str,
+                   evidence: str = "None provided",
+                   attachment1: discord.Attachment = None,
+                   attachment2: discord.Attachment = None):
+        await interaction.response.defer()
 
-        await interaction.response.defer(ephemeral=True)
-        clean_evidence = evidence.strip() if evidence else "None provided"
+        actor = interaction.user
+        if not is_staff(actor):
+            return await interaction.followup.send("❌ Only staff members may warn.", ephemeral=True)
+        if user.bot:
+            return await interaction.followup.send("❌ You cannot warn a bot.", ephemeral=True)
+        if user == actor:
+            return await interaction.followup.send("❌ You cannot warn yourself.", ephemeral=True)
 
-        await self.bot.db.add_warn(
-            user_id=str(member.id),
-            guild_id=str(interaction.guild.id),
-            reason=reason,
-            evidence=clean_evidence,
-            warned_by=str(interaction.user.id)
-        )
-        warns = await self.bot.db.get_warns(str(member.id), str(interaction.guild.id))
-        warn_num = len(warns)
+        attachments   = [a for a in [attachment1, attachment2] if a]
+        evidence_full = format_evidence(evidence, attachments)
 
-        await self.bot.db.log_staff_action(
-            action="WARN",
-            target_id=str(member.id),
-            actor_id=str(interaction.user.id),
-            guild_id=str(interaction.guild.id),
-            note=f"#{warn_num}: {reason}"
-        )
+        guild = interaction.guild
+        await self.bot.db.add_warn(str(user.id), str(guild.id), reason, evidence_full, str(actor.id))
+        warns      = await self.bot.db.get_warns(str(user.id), str(guild.id))
+        warn_count = len(warns)
 
-        log_embed = discord.Embed(
-            title=f"⚠️ Member Warned (#{warn_num})",
-            color=discord.Color.yellow(),
-            timestamp=datetime.datetime.utcnow()
-        )
-        log_embed.add_field(name="Member", value=f"{member.mention} (`{member.id}`)", inline=True)
-        log_embed.add_field(name="Warned By", value=f"{interaction.user.mention}", inline=True)
-        log_embed.add_field(name="Total Warns", value=str(warn_num), inline=True)
-        log_embed.add_field(name="Reason", value=reason, inline=False)
-        log_embed.add_field(name="Evidence", value=clean_evidence, inline=False)
-        await self._post_mod_log(interaction.guild, log_embed)
+        log_embed = discord.Embed(title="⚠️ Warning Issued", color=discord.Color.yellow(), timestamp=discord.utils.utcnow())
+        log_embed.set_thumbnail(url=user.display_avatar.url)
+        log_embed.add_field(name="Discord ID",     value=f"{user.mention} (`{user.id}`)", inline=False)
+        log_embed.add_field(name="Reason",         value=reason,                          inline=False)
+        log_embed.add_field(name="Evidence",       value=evidence_full,                   inline=False)
+        log_embed.add_field(name="Warned By",      value=f"{actor.mention} (`{actor.id}`)", inline=True)
+        log_embed.add_field(name="Total Warnings", value=f"**{warn_count}** warning(s)",  inline=True)
+        log_embed.set_footer(text=f"User ID: {user.id}")
+
+        if warn_count > 1:
+            prev_text = ""
+            for i, w in enumerate(warns[:-1], 1):
+                date = str(w.get("created_at", ""))[:10]
+                prev_text += f"**{i}.** {w['reason']} *({date})*\n"
+            log_embed.add_field(name=f"Previous Warnings ({warn_count - 1})", value=prev_text[:1024], inline=False)
+
+        log_channel = guild.get_channel(WARN_LOG_CHANNEL)
+        if log_channel:
+            await log_channel.send(embed=log_embed)
+
+        confirm = discord.Embed(title="✅ Warning Issued", color=discord.Color.green(), timestamp=discord.utils.utcnow())
+        confirm.add_field(name="Member",         value=user.mention,    inline=True)
+        confirm.add_field(name="Reason",         value=reason,          inline=True)
+        confirm.add_field(name="Total Warnings", value=f"{warn_count}", inline=True)
+        await interaction.followup.send(embed=confirm)
 
         try:
-            dm = discord.Embed(
-                title=f"⚠️ Warning Issued in {interaction.guild.name}",
-                description=f"**Reason:** {reason}\n**Total Warnings:** {warn_num}",
-                color=discord.Color.yellow(),
-                timestamp=datetime.datetime.utcnow()
+            dm = discord.Embed(title="⚠️ You Have Been Warned", color=discord.Color.yellow(), timestamp=discord.utils.utcnow())
+            dm.description = (
+                f"You have been warned in **Afternight Legacies** for **{reason}**.\n\n"
+                f"If this is a mistake open a ticket:\n{APPEAL_SERVER}"
             )
-            await member.send(embed=dm)
+            dm.set_footer(text="Afternight Moderation")
+            await user.send(embed=dm)
         except discord.Forbidden:
             pass
 
-        await interaction.followup.send(
-            f"✅ Warned {member.mention} (Warning **#{warn_num}**).",
-            ephemeral=True
-        )
+    # ── /viewwarns ────────────────────────────────────────────────────────────
 
-    @app_commands.command(name="warns", description="View warnings for a member.")
-    @app_commands.describe(member="Member to check warnings for")
-    async def warns(self, interaction: discord.Interaction, member: discord.Member):
+    @app_commands.command(name="viewwarns", description="View warnings for a member.")
+    @app_commands.describe(user="The member to check")
+    async def viewwarns(self, interaction: discord.Interaction, user: discord.Member):
+        await interaction.response.defer()
+
         if not is_staff(interaction.user):
-            return await interaction.response.send_message(
-                "❌ Only staff members can view warnings.",
-                ephemeral=True
-            )
+            return await interaction.followup.send("❌ Only staff may view warnings.", ephemeral=True)
 
-        await interaction.response.defer(ephemeral=True)
-        entries = await self.bot.db.get_warns(str(member.id), str(interaction.guild.id))
-        if not entries:
-            return await interaction.followup.send(
-                f"📭 {member.mention} has no warnings.",
-                ephemeral=True
-            )
+        guild = interaction.guild
+        warns = await self.bot.db.get_warns(str(user.id), str(guild.id))
+        count = len(warns)
 
         embed = discord.Embed(
-            title=f"⚠️ Warnings for {member.display_name} ({len(entries)})",
-            color=discord.Color.yellow(),
-            timestamp=datetime.datetime.utcnow()
+            title=f"⚠️ Warnings — {user.display_name}",
+            color=discord.Color.yellow() if count > 0 else discord.Color.green(),
+            timestamp=discord.utils.utcnow()
         )
-        for idx, w in enumerate(entries[:25], start=1):
-            embed.add_field(
-                name=f"Warn #{idx} — By <@{w['warned_by']}>",
-                value=f"**Reason:** {w['reason']}\n**Evidence:** {w.get('evidence') or 'None'}",
-                inline=False
-            )
+        embed.set_thumbnail(url=user.display_avatar.url)
+        embed.add_field(name="Total Warnings", value=f"**{count}**", inline=True)
+        embed.add_field(name="Discord ID",     value=f"`{user.id}`", inline=True)
 
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        if warns:
+            for i, w in enumerate(warns, 1):
+                date       = str(w.get("created_at", ""))[:10]
+                issuer     = guild.get_member(int(w["warned_by"]))
+                issuer_str = issuer.display_name if issuer else f"ID: {w['warned_by']}"
+                embed.add_field(
+                    name=f"Warning {i} — {date}",
+                    value=f"**Reason:** {w['reason']}\n**Evidence:** {w.get('evidence', 'None')}\n**By:** {issuer_str}",
+                    inline=False
+                )
+        else:
+            embed.add_field(name="No Warnings", value="This member has no warnings.", inline=False)
 
-    @app_commands.command(name="removewarn", description="Remove a specific warning by number (1-based).")
-    @app_commands.describe(member="Member to remove warning from", number="Warning number to remove")
-    async def removewarn(self, interaction: discord.Interaction, member: discord.Member, number: int):
-        if not is_staff(interaction.user):
-            return await interaction.response.send_message(
-                "❌ Only staff members can remove warnings.",
-                ephemeral=True
-            )
-        if number < 1:
-            return await interaction.response.send_message(
-                "❌ Warning number must be 1 or higher.",
-                ephemeral=True
-            )
+        embed.set_footer(text=f"User ID: {user.id}")
+        await interaction.followup.send(embed=embed)
 
+    # ── /clearwarns ───────────────────────────────────────────────────────────
+
+    @app_commands.command(name="clearwarns", description="Clear one or all warnings for a member.")
+    @app_commands.describe(user="The member whose warnings to manage")
+    async def clearwarns(self, interaction: discord.Interaction, user: discord.Member):
         await interaction.response.defer(ephemeral=True)
-        removed = await self.bot.db.delete_warn_by_index(
-            str(member.id), str(interaction.guild.id), number - 1
+
+        if not is_admin(interaction.user):
+            return await interaction.followup.send("❌ Only Admins or above may clear warnings.", ephemeral=True)
+
+        guild = interaction.guild
+        warns = await self.bot.db.get_warns(str(user.id), str(guild.id))
+
+        if not warns:
+            return await interaction.followup.send(f"❌ {user.mention} has no warnings.", ephemeral=True)
+
+        embed = discord.Embed(
+            title=f"🗑️ Clear Warnings — {user.display_name}",
+            description=f"{user.mention} has **{len(warns)}** warning(s). Select which to remove:",
+            color=discord.Color.orange(),
+            timestamp=discord.utils.utcnow()
         )
-        if not removed:
-            return await interaction.followup.send(
-                f"❌ Warning **#{number}** not found for {member.mention}.",
-                ephemeral=True
-            )
+        view = WarnSelectView(warns, user, self.bot)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
-        await self.bot.db.log_staff_action(
-            action="REMOVE_WARN",
-            target_id=str(member.id),
-            actor_id=str(interaction.user.id),
-            guild_id=str(interaction.guild.id),
-            note=f"Removed warn #{number}"
-        )
+    # ── /ban ──────────────────────────────────────────────────────────────────
 
-        log_embed = discord.Embed(
-            title="🗑️ Warning Removed",
-            color=discord.Color.green(),
-            timestamp=datetime.datetime.utcnow()
-        )
-        log_embed.add_field(name="Member", value=f"{member.mention} (`{member.id}`)", inline=True)
-        log_embed.add_field(name="Warning #", value=str(number), inline=True)
-        log_embed.add_field(name="Removed By", value=f"{interaction.user.mention}", inline=True)
-        await self._post_mod_log(interaction.guild, log_embed)
-
-        await interaction.followup.send(
-            f"✅ Removed warning **#{number}** from {member.mention}.",
-            ephemeral=True
-        )
-
-    @app_commands.command(name="clearwarns", description="Clear all warnings for a member.")
-    @app_commands.describe(member="Member to clear warnings for")
-    async def clearwarns(self, interaction: discord.Interaction, member: discord.Member):
-        if not is_staff(interaction.user):
-            return await interaction.response.send_message(
-                "❌ Only staff members can clear warnings.",
-                ephemeral=True
-            )
-
-        await interaction.response.defer(ephemeral=True)
-        count = await self.bot.db.clear_warns(str(member.id), str(interaction.guild.id))
-        await self.bot.db.log_staff_action(
-            action="CLEAR_WARNS",
-            target_id=str(member.id),
-            actor_id=str(interaction.user.id),
-            guild_id=str(interaction.guild.id),
-            note=f"Cleared {count} warns"
-        )
-
-        log_embed = discord.Embed(
-            title="🧹 Warnings Cleared",
-            color=discord.Color.green(),
-            timestamp=datetime.datetime.utcnow()
-        )
-        log_embed.add_field(name="Member", value=f"{member.mention} (`{member.id}`)", inline=True)
-        log_embed.add_field(name="Cleared Count", value=str(count), inline=True)
-        log_embed.add_field(name="Cleared By", value=f"{interaction.user.mention}", inline=True)
-        await self._post_mod_log(interaction.guild, log_embed)
-
-        await interaction.followup.send(
-            f"✅ Cleared **{count}** warning(s) for {member.mention}.",
-            ephemeral=True
-        )
-
-    # ── Temp Ban ──────────────────────────────────────────────────────────────
-
-    @app_commands.command(name="tempban", description="Temporarily ban a member until a specified date.")
+    @app_commands.command(name="ban", description="Ban a member from the server.")
     @app_commands.describe(
-        member="Member to temporarily ban",
-        unban_date="Date to unban (e.g. December 5, 2026)",
-        reason="Reason for the temporary ban"
+        user="The member to ban",
+        reason="Reason for the ban",
+        evidence="Evidence link(s)",
+        temporary="Is this a temporary ban?",
+        unban_date="If temporary, when they get unbanned (e.g. July 20 2026)",
+        delete_days="Number of days of messages to delete (0-7)",
+        attachment1="Evidence attachment (optional)",
+        attachment2="Second evidence attachment (optional)"
     )
-    async def tempban(
-        self,
-        interaction: discord.Interaction,
-        member: discord.Member,
-        unban_date: str,
-        reason: str
-    ):
-        if not is_staff(interaction.user):
-            return await interaction.response.send_message(
-                "❌ Only staff members can issue temporary bans.",
-                ephemeral=True
-            )
+    @app_commands.choices(temporary=[
+        app_commands.Choice(name="Yes — Temporary Ban", value="yes"),
+        app_commands.Choice(name="No — Permanent Ban",  value="no"),
+    ])
+    async def ban(self, interaction: discord.Interaction,
+                  user: discord.Member, reason: str, temporary: str,
+                  evidence: str = "None provided", unban_date: str = None,
+                  delete_days: int = 0,
+                  attachment1: discord.Attachment = None,
+                  attachment2: discord.Attachment = None):
+        await interaction.response.defer()
 
-        await interaction.response.defer(ephemeral=True)
+        actor = interaction.user
+        if not is_admin(actor):
+            return await interaction.followup.send("❌ Only Admins or above may ban.", ephemeral=True)
+        if user == actor:
+            return await interaction.followup.send("❌ You cannot ban yourself.", ephemeral=True)
+        if user.top_role >= interaction.guild.me.top_role:
+            return await interaction.followup.send("❌ I cannot ban this user.", ephemeral=True)
+        if temporary == "yes" and not unban_date:
+            return await interaction.followup.send("❌ Provide an unban date for a temp ban.", ephemeral=True)
+        if not 0 <= delete_days <= 7:
+            return await interaction.followup.send("❌ Delete days must be 0-7.", ephemeral=True)
+
+        attachments   = [a for a in [attachment1, attachment2] if a]
+        evidence_full = format_evidence(evidence, attachments)
+        guild         = interaction.guild
+        is_temp       = temporary == "yes"
+        ban_type_str  = f"Temporary — Unban: **{unban_date}**" if is_temp else "Permanent"
 
         try:
-            await interaction.guild.ban(member, reason=f"Temp ban until {unban_date}: {reason}")
+            dm = discord.Embed(title="🔨 You Have Been Banned", color=discord.Color.red(), timestamp=discord.utils.utcnow())
+            dm.description = (
+                f"You have been **{'temporarily' if is_temp else 'permanently'} banned** from **Afternight Legacies**.\n\n"
+                f"**Reason:** {reason}\n"
+            )
+            if is_temp:
+                dm.description += f"**Unban Date:** {unban_date}\n\n"
+            else:
+                dm.description += "\n"
+            dm.description += f"Appeal here:\n{APPEAL_SERVER}"
+            dm.set_footer(text="Afternight Moderation")
+            await user.send(embed=dm)
         except discord.Forbidden:
+            pass
+
+        await guild.ban(user, reason=f"{reason} | Banned by {actor}", delete_message_days=delete_days)
+
+        if is_temp:
+            await self.bot.db.add_temp_ban(str(user.id), str(guild.id), unban_date, reason, str(actor.id))
+
+        log_embed = discord.Embed(title="🔨 Member Banned", color=discord.Color.red(), timestamp=discord.utils.utcnow())
+        log_embed.set_thumbnail(url=user.display_avatar.url)
+        log_embed.add_field(name="Discord ID",        value=f"{user.mention} (`{user.id}`)", inline=False)
+        log_embed.add_field(name="Reason",            value=reason,                          inline=False)
+        log_embed.add_field(name="Temporary Or Perm", value=ban_type_str,                    inline=False)
+        log_embed.add_field(name="Evidence",          value=evidence_full,                   inline=False)
+        log_embed.add_field(name="Banned By",         value=f"{actor.mention} (`{actor.id}`)", inline=True)
+        log_embed.add_field(name="Messages Deleted",  value=f"{delete_days} day(s)",         inline=True)
+        log_embed.set_footer(text=f"User ID: {user.id}")
+
+        log_channel = guild.get_channel(BAN_LOG_CHANNEL)
+        if log_channel:
+            await log_channel.send(embed=log_embed)
+
+        confirm = discord.Embed(title="✅ Member Banned", color=discord.Color.red(), timestamp=discord.utils.utcnow())
+        confirm.add_field(name="Member", value=user.mention,  inline=True)
+        confirm.add_field(name="Reason", value=reason,        inline=True)
+        confirm.add_field(name="Type",   value=ban_type_str,  inline=True)
+        await interaction.followup.send(embed=confirm)
+
+    # ── /kick ─────────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="kick", description="Kick a member from the server.")
+    @app_commands.describe(
+        user="The member to kick",
+        reason="Reason for the kick",
+        evidence="Evidence link(s)",
+        attachment1="Evidence attachment (optional)",
+        attachment2="Second evidence attachment (optional)"
+    )
+    async def kick(self, interaction: discord.Interaction,
+                   user: discord.Member, reason: str,
+                   evidence: str = "None provided",
+                   attachment1: discord.Attachment = None,
+                   attachment2: discord.Attachment = None):
+        await interaction.response.defer()
+
+        actor = interaction.user
+        if not is_staff(actor):
+            return await interaction.followup.send("❌ Only staff may kick.", ephemeral=True)
+        if user == actor:
+            return await interaction.followup.send("❌ You cannot kick yourself.", ephemeral=True)
+        if user.top_role >= interaction.guild.me.top_role:
+            return await interaction.followup.send("❌ I cannot kick this user.", ephemeral=True)
+
+        attachments   = [a for a in [attachment1, attachment2] if a]
+        evidence_full = format_evidence(evidence, attachments)
+        guild         = interaction.guild
+
+        try:
+            dm = discord.Embed(title="👢 You Have Been Kicked", color=discord.Color.orange(), timestamp=discord.utils.utcnow())
+            dm.description = (
+                f"You have been **kicked** from **Afternight Legacies**.\n\n"
+                f"**Reason:** {reason}\n\nAppeal here:\n{APPEAL_SERVER}"
+            )
+            dm.set_footer(text="Afternight Moderation")
+            await user.send(embed=dm)
+        except discord.Forbidden:
+            pass
+
+        await guild.kick(user, reason=f"{reason} | Kicked by {actor}")
+
+        log_embed = discord.Embed(title="👢 Member Kicked", color=discord.Color.orange(), timestamp=discord.utils.utcnow())
+        log_embed.set_thumbnail(url=user.display_avatar.url)
+        log_embed.add_field(name="Discord ID", value=f"{user.mention} (`{user.id}`)", inline=False)
+        log_embed.add_field(name="Reason",     value=reason,                          inline=False)
+        log_embed.add_field(name="Evidence",   value=evidence_full,                   inline=False)
+        log_embed.add_field(name="Kicked By",  value=f"{actor.mention} (`{actor.id}`)", inline=False)
+        log_embed.set_footer(text=f"User ID: {user.id}")
+
+        log_channel = guild.get_channel(KICK_LOG_CHANNEL)
+        if log_channel:
+            await log_channel.send(embed=log_embed)
+
+        confirm = discord.Embed(title="✅ Member Kicked", color=discord.Color.orange(), timestamp=discord.utils.utcnow())
+        confirm.add_field(name="Member", value=user.mention, inline=True)
+        confirm.add_field(name="Reason", value=reason,       inline=True)
+        await interaction.followup.send(embed=confirm)
+
+    # ── /mute ─────────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="mute", description="Timeout (mute) a member.")
+    @app_commands.describe(
+        user="The member to mute",
+        reason="Reason",
+        duration="Duration (10m, 1h, 1d — max 28 days)",
+        evidence="Evidence link(s)",
+        attachment1="Evidence attachment (optional)",
+        attachment2="Second evidence attachment (optional)"
+    )
+    async def mute(self, interaction: discord.Interaction,
+                   user: discord.Member, reason: str, duration: str,
+                   evidence: str = "None provided",
+                   attachment1: discord.Attachment = None,
+                   attachment2: discord.Attachment = None):
+        await interaction.response.defer()
+
+        actor = interaction.user
+        if not is_staff(actor):
+            return await interaction.followup.send("❌ Only staff may mute.", ephemeral=True)
+        if user == actor:
+            return await interaction.followup.send("❌ You cannot mute yourself.", ephemeral=True)
+        if user.top_role >= interaction.guild.me.top_role:
+            return await interaction.followup.send("❌ I cannot mute this user.", ephemeral=True)
+
+        delta = parse_duration(duration)
+        if not delta:
+            return await interaction.followup.send("❌ Invalid duration. Use `10m`, `1h`, `1d` etc.", ephemeral=True)
+        if delta > datetime.timedelta(days=28):
+            return await interaction.followup.send("❌ Maximum mute duration is 28 days.", ephemeral=True)
+
+        attachments   = [a for a in [attachment1, attachment2] if a]
+        evidence_full = format_evidence(evidence, attachments)
+
+        until     = discord.utils.utcnow() + delta
+        until_str = until.strftime("%B %d, %Y at %I:%M %p UTC")
+
+        try:
+            dm = discord.Embed(title="🔇 You Have Been Muted", color=discord.Color.dark_grey(), timestamp=discord.utils.utcnow())
+            dm.description = (
+                f"You have been **muted** in **Afternight Legacies**.\n\n"
+                f"**Reason:** {reason}\n**Duration:** {duration}\n**Unmuted:** {until_str}\n\n"
+                f"Appeal here:\n{APPEAL_SERVER}"
+            )
+            dm.set_footer(text="Afternight Moderation")
+            await user.send(embed=dm)
+        except discord.Forbidden:
+            pass
+
+        await user.timeout(until, reason=f"{reason} | Muted by {actor}")
+
+        log_embed = discord.Embed(title="🔇 Member Muted", color=discord.Color.dark_grey(), timestamp=discord.utils.utcnow())
+        log_embed.set_thumbnail(url=user.display_avatar.url)
+        log_embed.add_field(name="Discord ID", value=f"{user.mention} (`{user.id}`)", inline=False)
+        log_embed.add_field(name="Reason",     value=reason,                          inline=False)
+        log_embed.add_field(name="Duration",   value=duration,                        inline=True)
+        log_embed.add_field(name="Unmuted",    value=until_str,                       inline=True)
+        log_embed.add_field(name="Evidence",   value=evidence_full,                   inline=False)
+        log_embed.add_field(name="Muted By",   value=f"{actor.mention} (`{actor.id}`)", inline=False)
+        log_embed.set_footer(text=f"User ID: {user.id}")
+
+        log_channel = interaction.guild.get_channel(MUTE_LOG_CHANNEL)
+        if log_channel:
+            await log_channel.send(embed=log_embed)
+
+        confirm = discord.Embed(title="✅ Member Muted", color=discord.Color.dark_grey(), timestamp=discord.utils.utcnow())
+        confirm.add_field(name="Member",   value=user.mention, inline=True)
+        confirm.add_field(name="Duration", value=duration,     inline=True)
+        confirm.add_field(name="Reason",   value=reason,       inline=True)
+        await interaction.followup.send(embed=confirm)
+
+    # ── /unmute ───────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="unmute", description="Remove a timeout from a member.")
+    @app_commands.describe(user="The member to unmute", reason="Reason (optional)")
+    async def unmute(self, interaction: discord.Interaction,
+                     user: discord.Member, reason: str = "Mute lifted by staff"):
+        await interaction.response.defer()
+
+        if not is_staff(interaction.user):
+            return await interaction.followup.send("❌ Only staff may unmute.", ephemeral=True)
+        if not user.is_timed_out():
+            return await interaction.followup.send(f"❌ {user.mention} is not muted.", ephemeral=True)
+
+        actor = interaction.user
+        await user.timeout(None, reason=f"{reason} | Unmuted by {actor}")
+
+        try:
+            dm = discord.Embed(title="🔊 You Have Been Unmuted", color=discord.Color.green(), timestamp=discord.utils.utcnow())
+            dm.description = f"Your mute in **Afternight Legacies** has been lifted.\n\n**Reason:** {reason}"
+            dm.set_footer(text="Afternight Moderation")
+            await user.send(embed=dm)
+        except discord.Forbidden:
+            pass
+
+        log_embed = discord.Embed(title="🔊 Member Unmuted", color=discord.Color.green(), timestamp=discord.utils.utcnow())
+        log_embed.set_thumbnail(url=user.display_avatar.url)
+        log_embed.add_field(name="Discord ID", value=f"{user.mention} (`{user.id}`)", inline=False)
+        log_embed.add_field(name="Reason",     value=reason,                          inline=False)
+        log_embed.add_field(name="Unmuted By", value=f"{actor.mention} (`{actor.id}`)", inline=False)
+        log_embed.set_footer(text=f"User ID: {user.id}")
+
+        log_channel = interaction.guild.get_channel(MUTE_LOG_CHANNEL)
+        if log_channel:
+            await log_channel.send(embed=log_embed)
+
+        confirm = discord.Embed(title="✅ Member Unmuted", color=discord.Color.green(), timestamp=discord.utils.utcnow())
+        confirm.add_field(name="Member", value=user.mention, inline=True)
+        confirm.add_field(name="Reason", value=reason,       inline=True)
+        await interaction.followup.send(embed=confirm)
+
+    # ── /unban ────────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="unban", description="Unban a user from the server.")
+    @app_commands.describe(user_id="The Discord ID to unban", reason="Reason")
+    async def unban(self, interaction: discord.Interaction,
+                    user_id: str, reason: str = "No reason provided"):
+        await interaction.response.defer()
+
+        if not is_admin(interaction.user):
+            return await interaction.followup.send("❌ Only Admins or above may unban.", ephemeral=True)
+
+        guild = interaction.guild
+        try:
+            user = await self.bot.fetch_user(int(user_id))
+        except (ValueError, discord.NotFound):
+            return await interaction.followup.send("❌ Could not find that user ID.", ephemeral=True)
+
+        try:
+            await guild.unban(user, reason=f"{reason} | Unbanned by {interaction.user}")
+        except discord.NotFound:
+            return await interaction.followup.send(f"❌ {user} is not banned.", ephemeral=True)
+
+        try:
+            expired = await self.bot.db.get_expired_temp_bans()
+            for ban in expired:
+                if ban["user_id"] == str(user.id) and ban["guild_id"] == str(guild.id):
+                    await self.bot.db.mark_temp_ban_expired(ban["id"])
+        except Exception:
+            pass
+
+        try:
+            dm = discord.Embed(title="✅ You Have Been Unbanned", color=discord.Color.green(), timestamp=discord.utils.utcnow())
+            dm.description = f"You have been **unbanned** from **Afternight Legacies**.\n\n**Reason:** {reason}"
+            dm.set_footer(text="Afternight Moderation")
+            await user.send(embed=dm)
+        except discord.Forbidden:
+            pass
+
+        log_embed = discord.Embed(title="✅ Member Unbanned", color=discord.Color.green(), timestamp=discord.utils.utcnow())
+        log_embed.add_field(name="Discord ID",  value=f"{user.mention} (`{user.id}`)", inline=False)
+        log_embed.add_field(name="Reason",      value=reason,                          inline=False)
+        log_embed.add_field(name="Unbanned By", value=interaction.user.mention,        inline=False)
+        log_embed.set_footer(text=f"User ID: {user.id}")
+
+        log_channel = guild.get_channel(UNBAN_LOG_CHANNEL)
+        if log_channel:
+            await log_channel.send(embed=log_embed)
+
+        confirm = discord.Embed(title="✅ Member Unbanned", color=discord.Color.green(), timestamp=discord.utils.utcnow())
+        confirm.add_field(name="User",   value=f"{user} (`{user.id}`)", inline=True)
+        confirm.add_field(name="Reason", value=reason,                  inline=True)
+        await interaction.followup.send(embed=confirm)
+
+    # ── /lockdownserver ───────────────────────────────────────────────────────
+
+    @app_commands.command(name="lockdownserver", description="Lock specific channels.")
+    @app_commands.describe(reason="Reason for the lockdown")
+    async def lockdownserver(self, interaction: discord.Interaction,
+                              reason: str = "No reason provided"):
+        await interaction.response.defer()
+
+        if not is_head(interaction.user):
             return await interaction.followup.send(
-                "❌ Missing permissions to ban this member. Check my role hierarchy.",
-                ephemeral=True
+                "❌ Only Staff OverHead/CM/Co-Owner/Owner may lockdown.", ephemeral=True
             )
 
-        await self.bot.db.add_temp_ban(
-            user_id=str(member.id),
-            guild_id=str(interaction.guild.id),
-            unban_date=unban_date,
-            reason=reason,
-            banned_by=str(interaction.user.id)
-        )
-        await self.bot.db.log_staff_action(
-            action="TEMPBAN",
-            target_id=str(member.id),
-            actor_id=str(interaction.user.id),
-            guild_id=str(interaction.guild.id),
-            note=f"Until {unban_date} | Reason: {reason}"
-        )
+        actor      = interaction.user
+        guild      = interaction.guild
+        staff_role = guild.get_role(ROLE_STAFF)
+        admin_role = guild.get_role(ROLE_ADMIN)
+        locked     = 0
+        failed     = 0
 
-        log_embed = discord.Embed(
-            title="⏳ Temporary Ban Issued",
+        lockdown_embed = discord.Embed(
+            title="🔒 Server Lockdown",
+            description=(
+                f"The server is currently under **lockdown**.\n\n"
+                f"**Reason:** {reason}\n\n"
+                f"Only staff members may speak during this time."
+            ),
             color=discord.Color.red(),
-            timestamp=datetime.datetime.utcnow()
+            timestamp=discord.utils.utcnow()
         )
-        log_embed.add_field(name="Member", value=f"{member.mention} (`{member.id}`)", inline=True)
-        log_embed.add_field(name="Banned By", value=f"{interaction.user.mention}", inline=True)
-        log_embed.add_field(name="Unban Date", value=unban_date, inline=True)
-        log_embed.add_field(name="Reason", value=reason, inline=False)
-        await self._post_mod_log(interaction.guild, log_embed)
+        lockdown_embed.set_footer(text=f"Lockdown initiated by {actor.display_name}")
 
-        await interaction.followup.send(
-            f"✅ Temporarily banned {member.mention} until **{unban_date}**.",
-            ephemeral=True
+        for channel_id in LOCKDOWN_TEXT_CHANNELS:
+            channel = guild.get_channel(channel_id)
+            if not channel:
+                continue
+            try:
+                ow = channel.overwrites_for(guild.default_role)
+                ow.send_messages = False
+                await channel.set_permissions(guild.default_role, overwrite=ow, reason=f"Lockdown by {actor}: {reason}")
+                for role in [staff_role, admin_role]:
+                    if role:
+                        sow = channel.overwrites_for(role)
+                        sow.send_messages = True
+                        await channel.set_permissions(role, overwrite=sow, reason="Lockdown — staff override")
+                await channel.send(embed=lockdown_embed)
+                locked += 1
+            except Exception:
+                failed += 1
+
+        for channel_id in LOCKDOWN_VOICE_CHANNELS:
+            channel = guild.get_channel(channel_id)
+            if not channel:
+                continue
+            try:
+                ow = channel.overwrites_for(guild.default_role)
+                ow.connect = False
+                await channel.set_permissions(guild.default_role, overwrite=ow, reason=f"Lockdown by {actor}: {reason}")
+                for role in [staff_role, admin_role]:
+                    if role:
+                        sow = channel.overwrites_for(role)
+                        sow.connect = True
+                        await channel.set_permissions(role, overwrite=sow, reason="Lockdown — staff override")
+                locked += 1
+            except Exception:
+                failed += 1
+
+        log_embed = discord.Embed(title="🔒 Server Lockdown Initiated", color=discord.Color.red(), timestamp=discord.utils.utcnow())
+        log_embed.add_field(name="By",     value=actor.mention,          inline=True)
+        log_embed.add_field(name="Reason", value=reason,                 inline=True)
+        log_embed.add_field(name="Locked", value=f"{locked} channel(s)", inline=True)
+        log_channel = guild.get_channel(LOCKDOWN_LOG_CHANNEL)
+        if log_channel:
+            await log_channel.send(embed=log_embed)
+
+        confirm = discord.Embed(title="🔒 Server Locked Down", color=discord.Color.red(), timestamp=discord.utils.utcnow())
+        confirm.add_field(name="Reason", value=reason,              inline=True)
+        confirm.add_field(name="Locked", value=f"{locked} channels", inline=True)
+        await interaction.followup.send(embed=confirm)
+
+    # ── /unlockdownserver ─────────────────────────────────────────────────────
+
+    @app_commands.command(name="unlockdownserver", description="Unlock all channels after a lockdown.")
+    @app_commands.describe(reason="Reason for ending the lockdown")
+    async def unlockdownserver(self, interaction: discord.Interaction,
+                                reason: str = "Lockdown lifted"):
+        await interaction.response.defer()
+
+        if not is_head(interaction.user):
+            return await interaction.followup.send(
+                "❌ Only Staff OverHead/CM/Co-Owner/Owner may unlock.", ephemeral=True
+            )
+
+        actor    = interaction.user
+        guild    = interaction.guild
+        unlocked = 0
+        failed   = 0
+
+        unlock_embed = discord.Embed(
+            title="🔓 Server Unlocked",
+            description=(
+                f"The server lockdown has been **lifted**.\n\n"
+                f"**Reason:** {reason}\n\n"
+                f"You may now speak freely. Please follow the server rules."
+            ),
+            color=discord.Color.green(),
+            timestamp=discord.utils.utcnow()
         )
+        unlock_embed.set_footer(text=f"Unlocked by {actor.display_name}")
 
-    # ── Staff Strikes ─────────────────────────────────────────────────────────
+        for channel_id in LOCKDOWN_TEXT_CHANNELS:
+            channel = guild.get_channel(channel_id)
+            if not channel:
+                continue
+            try:
+                ow = channel.overwrites_for(guild.default_role)
+                ow.send_messages = None
+                await channel.set_permissions(guild.default_role, overwrite=ow, reason=f"Lockdown lifted by {actor}: {reason}")
+                msg = await channel.send(embed=unlock_embed)
+                await msg.delete(delay=15)
+                unlocked += 1
+            except Exception:
+                failed += 1
+
+        for channel_id in LOCKDOWN_VOICE_CHANNELS:
+            channel = guild.get_channel(channel_id)
+            if not channel:
+                continue
+            try:
+                ow = channel.overwrites_for(guild.default_role)
+                ow.connect = None
+                await channel.set_permissions(guild.default_role, overwrite=ow, reason=f"Lockdown lifted by {actor}: {reason}")
+                unlocked += 1
+            except Exception:
+                failed += 1
+
+        log_embed = discord.Embed(title="🔓 Server Lockdown Lifted", color=discord.Color.green(), timestamp=discord.utils.utcnow())
+        log_embed.add_field(name="By",       value=actor.mention,            inline=True)
+        log_embed.add_field(name="Reason",   value=reason,                   inline=True)
+        log_embed.add_field(name="Unlocked", value=f"{unlocked} channel(s)", inline=True)
+        log_channel = guild.get_channel(LOCKDOWN_LOG_CHANNEL)
+        if log_channel:
+            await log_channel.send(embed=log_embed)
+
+        confirm = discord.Embed(title="🔓 Server Unlocked", color=discord.Color.green(), timestamp=discord.utils.utcnow())
+        confirm.add_field(name="Reason",   value=reason,               inline=True)
+        confirm.add_field(name="Unlocked", value=f"{unlocked} channels", inline=True)
+        await interaction.followup.send(embed=confirm)
+
+    # ── /staffstrike ──────────────────────────────────────────────────────────
 
     @app_commands.command(name="staffstrike", description="Issue a strike to a staff member.")
-    @app_commands.describe(
-        member="Staff member to strike",
-        reason="Reason for the staff strike",
-        evidence="Optional link or evidence"
-    )
-    async def staffstrike(
-        self,
-        interaction: discord.Interaction,
-        member: discord.Member,
-        reason: str,
-        evidence: Optional[str] = None
-    ):
-        if not self._can_manage_staff_ranks(interaction.user):
-            return await interaction.response.send_message(
-                "❌ You don't have permission to issue staff strikes.",
-                ephemeral=True
+    @app_commands.describe(user="The staff member", reason="Reason", evidence="Evidence (optional)")
+    async def staffstrike(self, interaction: discord.Interaction,
+                          user: discord.Member, reason: str,
+                          evidence: str = "None provided"):
+        await interaction.response.defer()
+
+        actor = interaction.user
+        if not is_head(actor):
+            return await interaction.followup.send("❌ Only Staff OverHead/CM/Co-Owner/Owner may strike staff.", ephemeral=True)
+        if not is_staff(user):
+            return await interaction.followup.send(f"❌ {user.mention} is not a staff member.", ephemeral=True)
+        if user == actor:
+            return await interaction.followup.send("❌ You cannot strike yourself.", ephemeral=True)
+
+        guild = interaction.guild
+        await self.bot.db.add_staff_strike(str(user.id), str(guild.id), reason, evidence, str(actor.id))
+        strikes      = await self.bot.db.get_staff_strikes(str(user.id), str(guild.id))
+        strike_count = len(strikes)
+
+        log_embed = discord.Embed(title="⚡ Staff Strike Issued", color=discord.Color.orange(), timestamp=discord.utils.utcnow())
+        log_embed.set_thumbnail(url=user.display_avatar.url)
+        log_embed.add_field(name="Staff Member",  value=f"{user.mention} (`{user.id}`)", inline=False)
+        log_embed.add_field(name="Reason",        value=reason,                          inline=False)
+        log_embed.add_field(name="Evidence",      value=evidence,                        inline=False)
+        log_embed.add_field(name="Issued By",     value=f"{actor.mention} (`{actor.id}`)", inline=True)
+        log_embed.add_field(name="Total Strikes", value=f"**{strike_count}/3**",         inline=True)
+        log_embed.set_footer(text=f"User ID: {user.id}")
+
+        if strike_count > 1:
+            prev_text = ""
+            for i, s in enumerate(strikes[:-1], 1):
+                date = str(s.get("created_at", ""))[:10]
+                prev_text += f"**{i}.** {s['reason']} *({date})*\n"
+            log_embed.add_field(name=f"Previous Strikes ({strike_count - 1})", value=prev_text[:1024], inline=False)
+
+        log_channel = guild.get_channel(STAFF_STRIKE_LOG_CHANNEL)
+        if log_channel:
+            await log_channel.send(embed=log_embed)
+
+        try:
+            dm = discord.Embed(title="⚡ You Have Received a Staff Strike", color=discord.Color.orange(), timestamp=discord.utils.utcnow())
+            dm.description = (
+                f"You have received a **staff strike** in **Afternight Legacies**.\n\n"
+                f"**Reason:** {reason}\n**Strike Count:** {strike_count}/3\n\n"
             )
+            if strike_count >= 3:
+                dm.description += "⚠️ You have reached **3/3 strikes** and have been **automatically removed from staff**."
+            else:
+                dm.description += "Reaching **3 strikes** will result in automatic removal from staff."
+            dm.set_footer(text="Afternight Staff System")
+            await user.send(embed=dm)
+        except discord.Forbidden:
+            pass
 
-        await interaction.response.defer(ephemeral=True)
-        clean_evidence = evidence.strip() if evidence else "None provided"
-
-        await self.bot.db.add_staff_strike(
-            user_id=str(member.id),
-            guild_id=str(interaction.guild.id),
-            reason=reason,
-            evidence=clean_evidence,
-            issued_by=str(interaction.user.id)
-        )
-        strikes = await self.bot.db.get_staff_strikes(str(member.id), str(interaction.guild.id))
-        count = len(strikes)
-
-        await self.bot.db.log_staff_action(
-            action="STAFF_STRIKE",
-            target_id=str(member.id),
-            actor_id=str(interaction.user.id),
-            guild_id=str(interaction.guild.id),
-            note=f"#{count}: {reason}"
-        )
-
-        log_embed = discord.Embed(
-            title=f"⚡ Staff Strike Issued (#{count})",
-            color=discord.Color.dark_red(),
-            timestamp=datetime.datetime.utcnow()
-        )
-        log_embed.add_field(name="Staff Member", value=f"{member.mention} (`{member.id}`)", inline=True)
-        log_embed.add_field(name="Issued By", value=f"{interaction.user.mention}", inline=True)
-        log_embed.add_field(name="Total Strikes", value=str(count), inline=True)
-        log_embed.add_field(name="Reason", value=reason, inline=False)
-        log_embed.add_field(name="Evidence", value=clean_evidence, inline=False)
-        await self._post_mod_log(interaction.guild, log_embed)
-
-        await interaction.followup.send(
-            f"✅ Issued staff strike **#{count}** to {member.mention}.",
-            ephemeral=True
-        )
-
-    @app_commands.command(name="staffstrikes", description="View staff strikes for a staff member.")
-    @app_commands.describe(member="Staff member to check")
-    async def staffstrikes(self, interaction: discord.Interaction, member: discord.Member):
-        if not is_staff(interaction.user):
-            return await interaction.response.send_message(
-                "❌ Only staff members can view staff strikes.",
-                ephemeral=True
+        if strike_count >= 3:
+            roles_removed = []
+            for role_id in ALL_STAFF_ROLES:
+                role = guild.get_role(role_id)
+                if role and role in user.roles:
+                    roles_removed.append(role)
+            if roles_removed:
+                await user.remove_roles(*roles_removed, reason="Auto-fired: 3 staff strikes")
+            fire_embed = discord.Embed(
+                title="🔥 Staff Member Auto-Fired",
+                description=(
+                    f"{user.mention} has reached **3/3 staff strikes** and has been automatically removed.\n\n"
+                    f"**Roles Removed:** {', '.join(r.name for r in roles_removed) or 'None'}"
+                ),
+                color=discord.Color.dark_red(),
+                timestamp=discord.utils.utcnow()
             )
+            if log_channel:
+                await log_channel.send(embed=fire_embed)
 
-        await interaction.response.defer(ephemeral=True)
-        entries = await self.bot.db.get_staff_strikes(str(member.id), str(interaction.guild.id))
-        if not entries:
-            return await interaction.followup.send(
-                f"📭 {member.mention} has no staff strikes.",
-                ephemeral=True
-            )
+        confirm = discord.Embed(title="✅ Staff Strike Issued", color=discord.Color.orange(), timestamp=discord.utils.utcnow())
+        confirm.add_field(name="Staff Member",  value=user.mention,        inline=True)
+        confirm.add_field(name="Strike Count",  value=f"{strike_count}/3", inline=True)
+        confirm.add_field(name="Reason",        value=reason,              inline=False)
+        if strike_count >= 3:
+            confirm.add_field(name="⚠️ Auto Action", value="Staff member has been fired.", inline=False)
+        await interaction.followup.send(embed=confirm)
+
+    # ── /viewstaffstrikes ─────────────────────────────────────────────────────
+
+    @app_commands.command(name="viewstaffstrikes", description="View staff strikes for a staff member.")
+    @app_commands.describe(user="The staff member to check")
+    async def viewstaffstrikes(self, interaction: discord.Interaction, user: discord.Member):
+        await interaction.response.defer()
+
+        if not is_head(interaction.user):
+            return await interaction.followup.send("❌ Only Staff OverHead/CM/Co-Owner/Owner may view staff strikes.", ephemeral=True)
+
+        guild   = interaction.guild
+        strikes = await self.bot.db.get_staff_strikes(str(user.id), str(guild.id))
+        count   = len(strikes)
 
         embed = discord.Embed(
-            title=f"⚡ Staff Strikes for {member.display_name} ({len(entries)})",
-            color=discord.Color.dark_red(),
-            timestamp=datetime.datetime.utcnow()
+            title=f"⚡ Staff Strikes — {user.display_name}",
+            color=discord.Color.orange() if count > 0 else discord.Color.green(),
+            timestamp=discord.utils.utcnow()
         )
-        for idx, s in enumerate(entries[:25], start=1):
-            embed.add_field(
-                name=f"Strike #{idx} — By <@{s['issued_by']}>",
-                value=f"**Reason:** {s['reason']}\n**Evidence:** {s.get('evidence') or 'None'}",
-                inline=False
-            )
+        embed.set_thumbnail(url=user.display_avatar.url)
+        embed.add_field(name="Total Strikes", value=f"**{count}/3**", inline=True)
+        embed.add_field(name="Discord ID",    value=f"`{user.id}`",   inline=True)
 
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        if strikes:
+            for i, s in enumerate(strikes, 1):
+                date       = str(s.get("created_at", ""))[:10]
+                issuer     = guild.get_member(int(s["issued_by"]))
+                issuer_str = issuer.display_name if issuer else f"ID: {s['issued_by']}"
+                embed.add_field(
+                    name=f"Strike {i} — {date}",
+                    value=f"**Reason:** {s['reason']}\n**Evidence:** {s.get('evidence', 'None')}\n**By:** {issuer_str}",
+                    inline=False
+                )
+        else:
+            embed.add_field(name="No Strikes", value="This staff member has no strikes.", inline=False)
 
-    @app_commands.command(name="clearstaffstrikes", description="Clear all staff strikes for a member.")
-    @app_commands.describe(member="Staff member to clear strikes for")
-    async def clearstaffstrikes(self, interaction: discord.Interaction, member: discord.Member):
-        if not self._can_manage_staff_ranks(interaction.user):
-            return await interaction.response.send_message(
-                "❌ You don't have permission to clear staff strikes.",
-                ephemeral=True
-            )
+        embed.set_footer(text=f"User ID: {user.id}")
+        await interaction.followup.send(embed=embed)
 
+    # ── /clearstaffstrikes ────────────────────────────────────────────────────
+
+    @app_commands.command(name="clearstaffstrikes", description="Clear all staff strikes for a staff member.")
+    @app_commands.describe(user="The staff member whose strikes to clear")
+    async def clearstaffstrikes(self, interaction: discord.Interaction, user: discord.Member):
         await interaction.response.defer(ephemeral=True)
-        count = await self.bot.db.clear_staff_strikes(str(member.id), str(interaction.guild.id))
-        await self.bot.db.log_staff_action(
-            action="CLEAR_STAFF_STRIKES",
-            target_id=str(member.id),
-            actor_id=str(interaction.user.id),
-            guild_id=str(interaction.guild.id),
-            note=f"Cleared {count} staff strikes"
-        )
 
-        log_embed = discord.Embed(
-            title="🧹 Staff Strikes Cleared",
+        if not is_head(interaction.user):
+            return await interaction.followup.send("❌ Only Staff OverHead/CM/Co-Owner/Owner may clear staff strikes.", ephemeral=True)
+
+        guild   = interaction.guild
+        removed = await self.bot.db.clear_staff_strikes(str(user.id), str(guild.id))
+
+        embed = discord.Embed(
+            title="✅ Staff Strikes Cleared",
+            description=f"Cleared **{removed}** strike(s) from {user.mention}.",
             color=discord.Color.green(),
-            timestamp=datetime.datetime.utcnow()
+            timestamp=discord.utils.utcnow()
         )
-        log_embed.add_field(name="Staff Member", value=f"{member.mention} (`{member.id}`)", inline=True)
-        log_embed.add_field(name="Cleared Count", value=str(count), inline=True)
-        log_embed.add_field(name="Cleared By", value=f"{interaction.user.mention}", inline=True)
-        await self._post_mod_log(interaction.guild, log_embed)
+        await interaction.followup.send(embed=embed)
 
-        await interaction.followup.send(
-            f"✅ Cleared **{count}** staff strike(s) for {member.mention}.",
-            ephemeral=True
-        )
-
+        log_channel = guild.get_channel(STAFF_STRIKE_LOG_CHANNEL)
+        if log_channel:
+            e = discord.Embed(title="🗑️ Staff Strikes Cleared", color=discord.Color.green(), timestamp=discord.utils.utcnow())
+            e.add_field(name="Staff Member", value=f"{user.mention} (`{user.id}`)", inline=True)
+            e.add_field(name="Cleared By",   value=interaction.user.mention,        inline=True)
+            e.add_field(name="Removed",      value=f"{removed} strike(s)",          inline=True)
+            await log_channel.send(embed=e)
 
 
 async def setup(bot):
