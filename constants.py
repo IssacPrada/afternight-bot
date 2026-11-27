@@ -103,19 +103,26 @@ STRIKE_STATUS = {
 FACTION_AUTORANK_CHANNEL_ID = 0  # Replace with your Faction username channel ID
 FACTIONS_GROUP_ID           = 127271910
 
-# Map faction & overseer Discord roles -> (faction_name, roblox_member_rank_number)
-# Overseers always map to basic member rank (never Leader).
-FACTION_AUTORANK_ROLE_MAP: dict[int, tuple[str, int]] = {
-    # Faction Members -> basic member rank
-    1575232569455280329: ("Sanguis Order",   10),   # [SOM] Sanguis Order Member.
-    1575232880555200693: ("Eldritch Thorn",  20),   # [ETM] Eldritch Thorn Member.
-    1575232935555112970: ("Silver Venom",    30),   # [SVM] SilverVenom Member.
-    1575232712543965324: ("Sepharine Coven", 40),   # [SCM] Sepharine Coven Member.
+# Map faction roles -> (faction_name, roblox_rank_number, label)
+# - Faction Leaders map to Leader rank (replace rank numbers with your group's exact Leader rank numbers)
+# - Faction Overseers map strictly to basic member rank (never Leader)
+FACTION_AUTORANK_ROLE_MAP: dict[int, tuple[str, int, str]] = {
+    # Faction Leaders -> Leader rank
+    1575228479006449797: ("Sanguis Order",   15, "Leader"),        # [SOL] Sanguis Order Leader.
+    1575228561881571481: ("Eldritch Thorn",  25, "Leader"),        # [ETL] Eldritch Thorn Leader.
+    1575228378850525287: ("Silver Venom",    35, "Leader"),        # [SVL] SilverVenom Leader.
+    1575228640507990096: ("Sepharine Coven", 45, "Leader"),        # [SCL] Sepharine Coven Leader.
 
-    # Faction Overseers -> basic member rank (NOT Leader)
-    1575227909897986108: ("Sanguis Order",   10),   # [SOO} Sanguis Order Overseer.
-    1575227971965423756: ("Eldritch Thorn",  20),   # [ETO] Eldritch Thorn Overseer.
-    1575228298416496650: ("Silver Venom",    30),   # [SVO] SilverVenom Overseer.
+    # Faction Members -> basic member rank
+    1575232569455280329: ("Sanguis Order",   10, "Basic Member"),  # [SOM] Sanguis Order Member.
+    1575232880555200693: ("Eldritch Thorn",  20, "Basic Member"),  # [ETM] Eldritch Thorn Member.
+    1575232935555112970: ("Silver Venom",    30, "Basic Member"),  # [SVM] SilverVenom Member.
+    1575232712543965324: ("Sepharine Coven", 40, "Basic Member"),  # [SCM] Sepharine Coven Member.
+
+    # Faction Overseers -> basic member rank ONLY (never Leader)
+    1575227909897986108: ("Sanguis Order",   10, "Basic Member"),  # [SOO} Sanguis Order Overseer.
+    1575227971965423756: ("Eldritch Thorn",  20, "Basic Member"),  # [ETO] Eldritch Thorn Overseer.
+    1575228298416496650: ("Silver Venom",    30, "Basic Member"),  # [SVO] SilverVenom Overseer.
 }
 
 # ─── Channels ─────────────────────────────────────────────────────────────────
