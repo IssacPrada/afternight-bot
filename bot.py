@@ -7,7 +7,6 @@ load_dotenv()
 
 import discord
 from discord.ext import commands
-from discord import app_commands
 from database import Database
 
 logging.basicConfig(
@@ -58,17 +57,22 @@ class AfternightBot(commands.Bot):
             "cogs.purge",
             "cogs.help",
         ]:
-            await self.load_extension(cog)
-            logger.info(f"Loaded cog: {cog}")
+            try:
+                await self.load_extension(cog)
+                logger.info(f"Loaded cog: {cog}")
+            except Exception as e:
+                logger.exception(f"Failed to load cog {cog}: {e}")
 
+        # Copy all loaded slash commands to the guild BEFORE clearing global commands
+        guild_obj = discord.Object(id=GUILD_ID)
+        self.tree.copy_global_to(guild=guild_obj)
+        synced = await self.tree.sync(guild=guild_obj)
+        logger.info(f"Synced {len(synced)} slash commands to guild {GUILD_ID}")
+
+        # Clear global commands so duplicates don't appear
         self.tree.clear_commands(guild=None)
         await self.tree.sync()
         logger.info("Cleared global slash commands")
-
-        guild_obj = discord.Object(id=GUILD_ID)
-        self.tree.copy_global_to(guild=guild_obj)
-        await self.tree.sync(guild=guild_obj)
-        logger.info(f"Synced slash commands to guild {GUILD_ID}")
 
     async def on_ready(self):
         logger.info(f"Logged in as {self.user} (ID: {self.user.id})")
