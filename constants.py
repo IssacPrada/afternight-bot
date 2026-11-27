@@ -100,7 +100,7 @@ STRIKE_STATUS = {
 }
 
 # ─── Auto-Rank Channels ───────────────────────────────────────────────────────
-FACTION_AUTORANK_CHANNEL_ID = 0  # Replace with your Faction username channel ID
+FACTION_AUTORANK_CHANNEL_ID = 1575222977686143008  # Replace with your Faction username channel ID
 FACTIONS_GROUP_ID           = 127271910
 
 # Map faction roles -> (faction_name, roblox_rank_number, label)
