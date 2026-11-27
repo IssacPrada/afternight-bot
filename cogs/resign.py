@@ -5,11 +5,10 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from constants import (
-    ALL_FACTION_ROLES, FACTION_LEADERS,
-    FACTION_LEADER_MAIN_ROLE, FACTION_GUIDE_ROLE,
-    STAFF_HIERARCHY, STAFF_TEAM_TAGS, SENIOR_STAFF_ROLES, ROLE_STAFF_TEAM, ROLE_ADMIN_TEAM,
-    RESIGN_LOG_CHANNEL_ID,
-    has_faction_role,
+    ALL_FACTION_ROLES, FACTION_LEADERS, FACTION_MEMBERS,
+    FACTION_OVERSEERS, FACTION_COUNCIL_GLOBAL, FACTION_LEADER_MAIN_ROLE,
+    STAFF_HIERARCHY, ROLE_STAFF_TEAM, ROLE_ADMIN_TEAM,
+    get_leader_faction, get_member_faction, get_council_faction,
     is_staff
 )
 from utils.roblox_group import get_roblox_user_id, get_xcsrf_token
@@ -20,7 +19,14 @@ import os
 # ── Config ────────────────────────────────────────────────────────────────────
 LEGACIES_GROUP_ID = 1024076883
 FACTIONS_GROUP_ID = 127271910
-COOKIE            = os.getenv("ROBLOX_SECURITY_COOKIE")
+
+OWNER_ID_1 = 1575225137542733954  # [O] Owner.
+OWNER_ID_2 = 1575225368577704116  # [Co-O] Co-Owner.
+
+COMMUNITY_MANAGER_ROLE = 1575225624837099631  # [CM] Community Manager.
+OVERSEER_ROLE          = 1575225697406947418  # [SOH] Staff OverHead
+
+COOKIE = os.getenv("ROBLOX_SECURITY_COOKIE")
 
 HEADERS_ROBLOX = {
     "Cookie": f".ROBLOSECURITY={COOKIE}",
@@ -46,13 +52,16 @@ async def get_role_id_for_rank(group_id: int, rank: int) -> int | None:
 
 
 async def demote_to_member_in_group(group_id: int, roblox_username: str) -> tuple[bool, str]:
+    """Demote a user to the lowest rank in a group."""
     user_id = await get_roblox_user_id(roblox_username)
     if not user_id:
         return False, f"Could not find Roblox user: `{roblox_username}`"
     try:
-        token   = await get_xcsrf_token()
-        headers = {**HEADERS_ROBLOX, "x-csrf-token": token}
-        role_id = await get_role_id_for_rank(group_id, 1) or await get_role_id_for_rank(group_id, 2)
+        token    = await get_xcsrf_token()
+        headers  = {**HEADERS_ROBLOX, "x-csrf-token": token}
+        role_id  = await get_role_id_for_rank(group_id, 1)
+        if not role_id:
+            role_id = await get_role_id_for_rank(group_id, 2)
         if not role_id:
             return False, "Could not find Member rank in group."
 
@@ -64,14 +73,16 @@ async def demote_to_member_in_group(group_id: int, roblox_username: str) -> tupl
             ) as resp:
                 if resp.status == 200:
                     return True, "✅ Demoted to Member in Roblox group."
-                error = await resp.json()
-                msg = error.get("errors", [{}])[0].get("message", "Unknown error")
-                return False, f"❌ Roblox API error: {msg}"
+                else:
+                    error = await resp.json()
+                    msg = error.get("errors", [{}])[0].get("message", "Unknown error")
+                    return False, f"❌ Roblox API error: {msg}"
     except Exception as e:
         return False, f"❌ Exception: {str(e)}"
 
 
 async def kick_from_factions_group(roblox_username: str) -> tuple[bool, str]:
+    """Kick a user from the Factions group."""
     user_id = await get_roblox_user_id(roblox_username)
     if not user_id:
         return False, f"Could not find Roblox user: `{roblox_username}`"
@@ -85,9 +96,10 @@ async def kick_from_factions_group(roblox_username: str) -> tuple[bool, str]:
             ) as resp:
                 if resp.status == 200:
                     return True, "✅ Removed from Factions Roblox group."
-                error = await resp.json()
-                msg   = error.get("errors", [{}])[0].get("message", "Unknown error")
-                return False, f"❌ Roblox API error: {msg}"
+                else:
+                    error = await resp.json()
+                    msg   = error.get("errors", [{}])[0].get("message", "Unknown error")
+                    return False, f"❌ Roblox API error: {msg}"
     except Exception as e:
         return False, f"❌ Exception: {str(e)}"
 
@@ -123,75 +135,216 @@ class ResignModal(discord.ui.Modal, title="Resignation"):
         reason = self.reason.value
         roblox = self.roblox_username.value.strip()
 
-        roles_removed = []
-        roblox_result = "No Roblox action taken."
-        resign_category = "Member"
+        member_role_ids = {r.id for r in member.roles}
 
-        all_faction_related = set(ALL_FACTION_ROLES) | {
-            FACTION_LEADER_MAIN_ROLE,
-            FACTION_GUIDE_ROLE,
-            *FACTION_LEADERS,
-        }
-        all_staff_related = set(STAFF_HIERARCHY) | set(SENIOR_STAFF_ROLES) | STAFF_TEAM_TAGS | {
-            ROLE_STAFF_TEAM,
-            ROLE_ADMIN_TEAM,
-        }
+        # ── Determine resign type ─────────────────────────────────────────────
+        is_community_manager = COMMUNITY_MANAGER_ROLE in member_role_ids
+        is_overseer          = OVERSEER_ROLE in member_role_ids
+        leader_faction       = get_leader_faction(member)
+        council_faction      = get_council_faction(member)
+        is_council_global    = FACTION_COUNCIL_GLOBAL in member_role_ids
+        member_faction       = get_member_faction(member)
+        staff_member         = is_staff(member)
 
-        if has_faction_role(member):
-            resign_category = "Faction"
-            for rid in all_faction_related:
+        roles_removed  = []
+        roblox_result  = "No Roblox action taken."
+        notify_targets = []
+
+        # ── All faction-related roles to always check ─────────────────────────
+        ALL_FACTION_RELATED = list(ALL_FACTION_ROLES) + [FACTION_LEADER_MAIN_ROLE]
+        for role_id in FACTION_LEADERS:
+            if role_id not in ALL_FACTION_RELATED:
+                ALL_FACTION_RELATED.append(role_id)
+
+        # ── Community Manager or Staff OverHead ───────────────────────────────
+        if is_community_manager or is_overseer:
+            for role_id in STAFF_HIERARCHY:
+                role = guild.get_role(role_id)
+                if role and role in member.roles:
+                    roles_removed.append(role)
+            for rid in [ROLE_STAFF_TEAM, ROLE_ADMIN_TEAM,
+                        COMMUNITY_MANAGER_ROLE, OVERSEER_ROLE]:
                 role = guild.get_role(rid)
                 if role and role in member.roles:
                     roles_removed.append(role)
-            _, roblox_result = await kick_from_factions_group(roblox)
-        elif is_staff(member):
-            resign_category = "Staff"
-            for rid in all_staff_related:
+
+            success, roblox_result = await demote_to_member_in_group(
+                LEGACIES_GROUP_ID, roblox
+            )
+
+            notify_targets.append((OWNER_ID_1, "community_manager_overseer"))
+            notify_targets.append((OWNER_ID_2, "community_manager_overseer"))
+
+        # ── Faction Council / Overseer ────────────────────────────────────────
+        elif council_faction or is_council_global:
+            role = guild.get_role(FACTION_COUNCIL_GLOBAL)
+            if role and role in member.roles:
+                roles_removed.append(role)
+            for role_id in FACTION_OVERSEERS:
+                r = guild.get_role(role_id)
+                if r and r in member.roles:
+                    roles_removed.append(r)
+
+            leader_main = guild.get_role(FACTION_LEADER_MAIN_ROLE)
+            if leader_main and leader_main in member.roles:
+                roles_removed.append(leader_main)
+
+            success, roblox_result = await kick_from_factions_group(roblox)
+
+            notify_targets.append((OWNER_ID_1, "council"))
+            cm_role = guild.get_role(COMMUNITY_MANAGER_ROLE)
+            if cm_role:
+                for m in cm_role.members:
+                    notify_targets.append((m, "council"))
+
+        # ── Faction Leader ────────────────────────────────────────────────────
+        elif leader_faction:
+            for role_id in ALL_FACTION_RELATED:
+                role = guild.get_role(role_id)
+                if role and role in member.roles:
+                    roles_removed.append(role)
+
+            success, roblox_result = await kick_from_factions_group(roblox)
+
+            if leader_faction == "Sepharine Coven":
+                for role_id in FACTION_OVERSEERS:
+                    r = guild.get_role(role_id)
+                    if r:
+                        for m in r.members:
+                            notify_targets.append((m, "leader"))
+                gc = guild.get_role(FACTION_COUNCIL_GLOBAL)
+                if gc:
+                    for m in gc.members:
+                        notify_targets.append((m, "leader"))
+            else:
+                for role_id, faction in FACTION_OVERSEERS.items():
+                    if faction == leader_faction:
+                        r = guild.get_role(role_id)
+                        if r:
+                            for m in r.members:
+                                notify_targets.append((m, "leader"))
+
+        # ── Faction Member ────────────────────────────────────────────────────
+        elif member_faction:
+            for role_id in ALL_FACTION_RELATED:
+                role = guild.get_role(role_id)
+                if role and role in member.roles:
+                    roles_removed.append(role)
+
+            success, roblox_result = await kick_from_factions_group(roblox)
+
+            for role_id, faction in FACTION_LEADERS.items():
+                if faction == member_faction:
+                    r = guild.get_role(role_id)
+                    if r:
+                        for m in r.members:
+                            notify_targets.append((m, "member"))
+
+        # ── Staff member ──────────────────────────────────────────────────────
+        elif staff_member:
+            for role_id in STAFF_HIERARCHY:
+                role = guild.get_role(role_id)
+                if role and role in member.roles:
+                    roles_removed.append(role)
+            for rid in [ROLE_STAFF_TEAM, ROLE_ADMIN_TEAM]:
                 role = guild.get_role(rid)
                 if role and role in member.roles:
                     roles_removed.append(role)
-            _, roblox_result = await demote_to_member_in_group(LEGACIES_GROUP_ID, roblox)
+
+            success, roblox_result = await demote_to_member_in_group(
+                LEGACIES_GROUP_ID, roblox
+            )
+
+            overseer_role = guild.get_role(OVERSEER_ROLE)
+            cm_role       = guild.get_role(COMMUNITY_MANAGER_ROLE)
+            if overseer_role:
+                for m in overseer_role.members:
+                    notify_targets.append((m, "staff"))
+            if cm_role:
+                for m in cm_role.members:
+                    notify_targets.append((m, "staff"))
+
         else:
             return await interaction.followup.send(
                 "❌ You don't have any staff or faction roles to resign from.",
                 ephemeral=True
             )
 
+        # ── Remove Discord roles ──────────────────────────────────────────────
         if roles_removed:
-            seen_ids     = set()
-            unique_roles = []
+            seen_ids      = set()
+            unique_roles  = []
             for r in roles_removed:
                 if r.id not in seen_ids:
                     seen_ids.add(r.id)
                     unique_roles.append(r)
-            try:
-                await member.remove_roles(*unique_roles, reason=f"Resigned: {reason}")
-            except discord.Forbidden:
-                pass
             roles_removed = unique_roles
 
-        removed_str = ", ".join(r.name for r in roles_removed) or "None"
+            await member.remove_roles(
+                *roles_removed,
+                reason=f"Resigned: {reason}"
+            )
 
-        # ── Post to dedicated Resign Log Channel (no DM spam to staff/owners) ──
+        # ── Build resign embed ────────────────────────────────────────────────
         resign_embed = discord.Embed(
-            title=f"📋 {resign_category} Resignation Notice",
+            title="📋 Resignation Notice",
             color=discord.Color.orange(),
             timestamp=datetime.datetime.utcnow()
         )
         resign_embed.set_thumbnail(url=member.display_avatar.url)
-        resign_embed.add_field(name="Member",        value=f"{member.mention} (`{member.id}`)", inline=True)
-        resign_embed.add_field(name="Roblox",        value=f"`{roblox}`",                      inline=True)
-        resign_embed.add_field(name="Category",      value=resign_category,                    inline=True)
-        resign_embed.add_field(name="Roles Removed", value=removed_str,                        inline=False)
-        resign_embed.add_field(name="Roblox Action", value=roblox_result,                      inline=False)
-        resign_embed.add_field(name="Reason",        value=reason,                              inline=False)
+        resign_embed.add_field(name="Member", value=member.mention, inline=True)
+        resign_embed.add_field(name="Roblox", value=f"`{roblox}`",  inline=True)
+        resign_embed.add_field(name="\u200b", value="\u200b",       inline=True)
+        resign_embed.add_field(
+            name="Roles Removed",
+            value=", ".join(r.name for r in roles_removed) or "None",
+            inline=False
+        )
+        resign_embed.add_field(name="Roblox Action", value=roblox_result, inline=False)
+        resign_embed.add_field(name="Reason",        value=reason,        inline=False)
         resign_embed.set_footer(text="Afternight Resignation System")
 
-        resign_channel = guild.get_channel(RESIGN_LOG_CHANNEL_ID)
-        if resign_channel:
-            await resign_channel.send(embed=resign_embed)
-        else:
-            await self.bot.log_action(resign_embed)
+        # ── Notify targets ────────────────────────────────────────────────────
+        seen = set()
+        for target, resign_type in notify_targets:
+            if isinstance(target, int):
+                try:
+                    target = await self.bot.fetch_user(target)
+                except Exception:
+                    continue
+
+            if target.id in seen or target.id == member.id:
+                continue
+            seen.add(target.id)
+
+            try:
+                notify_embed = discord.Embed(
+                    title="📢 Resignation Notice",
+                    color=discord.Color.orange(),
+                    timestamp=datetime.datetime.utcnow()
+                )
+                notify_embed.set_thumbnail(url=member.display_avatar.url)
+                notify_embed.add_field(
+                    name="Who Resigned",
+                    value=f"{member.mention} (`{member.display_name}`)",
+                    inline=True
+                )
+                notify_embed.add_field(name="Roblox", value=f"`{roblox}`", inline=True)
+                notify_embed.add_field(name="Reason", value=reason,        inline=False)
+                notify_embed.add_field(
+                    name="Roles Removed",
+                    value=", ".join(r.name for r in roles_removed) or "None",
+                    inline=False
+                )
+                notify_embed.add_field(
+                    name="Roblox Action",
+                    value=roblox_result,
+                    inline=False
+                )
+                notify_embed.set_footer(text="Afternight Resignation System")
+                await target.send(embed=notify_embed)
+            except discord.Forbidden:
+                pass
 
         # ── DM the resigning member ───────────────────────────────────────────
         try:
@@ -203,7 +356,7 @@ class ResignModal(discord.ui.Modal, title="Resignation"):
             dm_embed.description = (
                 f"Your resignation has been processed.\n\n"
                 f"**Reason:** {reason}\n\n"
-                f"**Roles Removed:** {removed_str}\n"
+                f"**Roles Removed:** {', '.join(r.name for r in roles_removed) or 'None'}\n"
                 f"**Roblox:** {roblox_result}\n\n"
                 f"Thank you for your time in Afternight. We wish you well!"
             )
@@ -212,10 +365,14 @@ class ResignModal(discord.ui.Modal, title="Resignation"):
             pass
 
         await interaction.followup.send(
-            f"✅ Your resignation has been submitted and logged in <#{RESIGN_LOG_CHANNEL_ID}>.",
+            "✅ Your resignation has been submitted and processed.",
             ephemeral=True
         )
 
+        await self.bot.log_action(resign_embed)
+
+
+# ── Cog ───────────────────────────────────────────────────────────────────────
 
 class ResignCog(commands.Cog):
     def __init__(self, bot):
@@ -226,13 +383,22 @@ class ResignCog(commands.Cog):
         description="Resign from your staff or faction role."
     )
     async def resign(self, interaction: discord.Interaction):
-        member = interaction.user
-        has_role = has_faction_role(member) or is_staff(member)
-        if not has_role:
+        member          = interaction.user
+        member_role_ids = {r.id for r in member.roles}
+
+        has_faction  = get_member_faction(member) is not None
+        has_leader   = get_leader_faction(member) is not None
+        has_council  = get_council_faction(member) is not None or FACTION_COUNCIL_GLOBAL in member_role_ids
+        has_staff    = is_staff(member)
+        is_cm        = COMMUNITY_MANAGER_ROLE in member_role_ids
+        is_os        = OVERSEER_ROLE in member_role_ids
+
+        if not any([has_faction, has_leader, has_council, has_staff, is_cm, is_os]):
             return await interaction.response.send_message(
                 "❌ You don't have any staff or faction roles to resign from.",
                 ephemeral=True
             )
+
         await interaction.response.send_modal(ResignModal(bot=self.bot))
 
 
