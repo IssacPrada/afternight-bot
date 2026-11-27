@@ -56,6 +56,9 @@ class AfternightBot(commands.Bot):
             "cogs.automod",
             "cogs.purge",
             "cogs.help",
+            "cogs.faction_autorank",
+            "cogs.roledump.py",
+            "cogs.steal.py",
         ]:
             try:
                 await self.load_extension(cog)
