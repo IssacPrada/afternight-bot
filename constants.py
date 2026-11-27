@@ -104,14 +104,14 @@ FACTION_AUTORANK_CHANNEL_ID = 1575222977686143008  # Replace with your Faction u
 FACTIONS_GROUP_ID           = 127271910
 
 # Map faction roles -> (faction_name, roblox_rank_number, label)
-# - Faction Leaders map to Leader rank (replace rank numbers with your group's exact Leader rank numbers)
-# - Faction Overseers map strictly to basic member rank (never Leader)
+# - All 4 Faction Leaders map to Rank 60
+# - Faction Members & Faction Overseers map strictly to basic member ranks (10, 20, 30, 40)
 FACTION_AUTORANK_ROLE_MAP: dict[int, tuple[str, int, str]] = {
-    # Faction Leaders -> Leader rank
-    1575228479006449797: ("Sanguis Order",   15, "Leader"),        # [SOL] Sanguis Order Leader.
-    1575228561881571481: ("Eldritch Thorn",  25, "Leader"),        # [ETL] Eldritch Thorn Leader.
-    1575228378850525287: ("Silver Venom",    35, "Leader"),        # [SVL] SilverVenom Leader.
-    1575228640507990096: ("Sepharine Coven", 45, "Leader"),        # [SCL] Sepharine Coven Leader.
+    # Faction Leaders -> Rank 60
+    1575228479006449797: ("Sanguis Order",   60, "Leader"),        # [SOL] Sanguis Order Leader.
+    1575228561881571481: ("Eldritch Thorn",  60, "Leader"),        # [ETL] Eldritch Thorn Leader.
+    1575228378850525287: ("Silver Venom",    60, "Leader"),        # [SVL] SilverVenom Leader.
+    1575228640507990096: ("Sepharine Coven", 60, "Leader"),        # [SCL] Sepharine Coven Leader.
 
     # Faction Members -> basic member rank
     1575232569455280329: ("Sanguis Order",   10, "Basic Member"),  # [SOM] Sanguis Order Member.
@@ -119,7 +119,7 @@ FACTION_AUTORANK_ROLE_MAP: dict[int, tuple[str, int, str]] = {
     1575232935555112970: ("Silver Venom",    30, "Basic Member"),  # [SVM] SilverVenom Member.
     1575232712543965324: ("Sepharine Coven", 40, "Basic Member"),  # [SCM] Sepharine Coven Member.
 
-    # Faction Overseers -> basic member rank ONLY (never Leader)
+    # Faction Overseers -> basic member rank ONLY (never Leader / Rank 60)
     1575227909897986108: ("Sanguis Order",   10, "Basic Member"),  # [SOO} Sanguis Order Overseer.
     1575227971965423756: ("Eldritch Thorn",  20, "Basic Member"),  # [ETO] Eldritch Thorn Overseer.
     1575228298416496650: ("Silver Venom",    30, "Basic Member"),  # [SVO] SilverVenom Overseer.
