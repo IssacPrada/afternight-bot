@@ -59,6 +59,7 @@ class AfternightBot(commands.Bot):
             "cogs.faction_autorank",
             "cogs.roledump",
             "cogs.steal",
+            "cogs.tiktok",
         ]:
             try:
                 await self.load_extension(cog)
