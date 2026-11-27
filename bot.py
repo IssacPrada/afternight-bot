@@ -60,6 +60,7 @@ class AfternightBot(commands.Bot):
             "cogs.roledump",
             "cogs.steal",
             "cogs.tiktok",
+            "cogs.faction_apps",
         ]:
             try:
                 await self.load_extension(cog)
