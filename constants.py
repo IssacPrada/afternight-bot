@@ -99,6 +99,25 @@ STRIKE_STATUS = {
     3: ("💀 Final Warning", discord.Color.red()),
 }
 
+# ─── Auto-Rank Channels ───────────────────────────────────────────────────────
+FACTION_AUTORANK_CHANNEL_ID = 0  # Replace with your Faction username channel ID
+FACTIONS_GROUP_ID           = 127271910
+
+# Map faction & overseer Discord roles -> (faction_name, roblox_member_rank_number)
+# Overseers always map to basic member rank (never Leader).
+FACTION_AUTORANK_ROLE_MAP: dict[int, tuple[str, int]] = {
+    # Faction Members -> basic member rank
+    1575232569455280329: ("Sanguis Order",   10),   # [SOM] Sanguis Order Member.
+    1575232880555200693: ("Eldritch Thorn",  20),   # [ETM] Eldritch Thorn Member.
+    1575232935555112970: ("Silver Venom",    30),   # [SVM] SilverVenom Member.
+    1575232712543965324: ("Sepharine Coven", 40),   # [SCM] Sepharine Coven Member.
+
+    # Faction Overseers -> basic member rank (NOT Leader)
+    1575227909897986108: ("Sanguis Order",   10),   # [SOO} Sanguis Order Overseer.
+    1575227971965423756: ("Eldritch Thorn",  20),   # [ETO] Eldritch Thorn Overseer.
+    1575228298416496650: ("Silver Venom",    30),   # [SVO] SilverVenom Overseer.
+}
+
 # ─── Channels ─────────────────────────────────────────────────────────────────
 BLACKLIST_CHANNEL_ID = 1575314707978391692
 
