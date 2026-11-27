@@ -2,10 +2,12 @@ import os
 import asyncio
 import logging
 from dotenv import load_dotenv
+
 load_dotenv()
 
 import discord
 from discord.ext import commands
+from discord import app_commands
 from database import Database
 
 logging.basicConfig(
@@ -32,7 +34,7 @@ class AfternightBot(commands.Bot):
             intents=intents,
             help_command=None
         )
-        self.db             = Database()
+        self.db = Database()
         self.log_channel_id = LOG_CHANNEL_ID
 
     async def setup_hook(self):
@@ -55,7 +57,6 @@ class AfternightBot(commands.Bot):
             "cogs.automod",
             "cogs.purge",
             "cogs.help",
-            "cogs.serverids",
         ]:
             await self.load_extension(cog)
             logger.info(f"Loaded cog: {cog}")
